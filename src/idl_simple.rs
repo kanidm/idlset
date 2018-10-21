@@ -1,4 +1,3 @@
-use idlset::IDL;
 use idlset::AndNot;
 use std::ops::{BitAnd, BitOr};
 use std::slice;
@@ -25,9 +24,7 @@ impl IDLSimple {
         };
         result
     }
-}
 
-impl IDL for IDLSimple {
     fn push_id(&mut self, value: u64) {
         let &mut IDLSimple(ref mut list) = self;
         list.push(value)

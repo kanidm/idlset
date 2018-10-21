@@ -37,16 +37,6 @@ pub trait AndNot<RHS = Self> {
     fn andnot(self, rhs: RHS) -> Self::Output;
 }
 
-/// Trait referring to the specific behaviours of an ID List. This allows other
-/// future implementations to act as IDL's and to be able to interact.
-pub trait IDL {
-    /// Push an id into the set. The value is inserted into the correct location
-    /// in the set.
-    fn push_id(&mut self, value: u64);
-    /// Returns the number of ids in the set.
-    fn len(&self) -> usize;
-}
-
 /// The core representation of sets of integers in compressed format.
 #[derive(Debug)]
 struct IDLRange {
@@ -229,9 +219,7 @@ impl IDLBitRange {
             }
         }
     }
-}
 
-impl IDL for IDLBitRange {
     /// Push an id into the set. The value is inserted onto the tail of the set
     /// which may cause you to break the structure if your input isn't sorted.
     /// You probably want `insert_id` instead.
@@ -573,7 +561,7 @@ impl fmt::Debug for IDLBitRange {
 #[cfg(test)]
 mod tests {
     // use test::Bencher;
-    use super::{IDLBitRange, AndNot, IDL};
+    use super::{IDLBitRange, AndNot};
     use std::iter::FromIterator;
 
     #[test]
