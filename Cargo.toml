@@ -1,0 +1,11 @@
+[package]
+name = "idlset"
+version = "0.1.0"
+authors = ["William Brown <william@blackhats.net.au>"]
+
+[dependencies]
+time = "0.1"
+
+[[bin]]
+name = "bench_idl"
+path = "src/bench.rs"
