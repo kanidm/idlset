@@ -1,5 +1,5 @@
-use super::IDL;
-use super::AndNot;
+use idlset::IDL;
+use idlset::AndNot;
 use std::ops::{BitAnd, BitOr};
 use std::{fmt, slice};
 use std::iter::FromIterator;

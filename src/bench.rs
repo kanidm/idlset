@@ -2,8 +2,10 @@
 extern crate idlset;
 extern crate time;
 
-use idlset::idl_simple::IDLSimple;
-use idlset::idl_range::IDLBitRange;
+mod idl_simple;
+
+use idl_simple::IDLSimple;
+use idlset::IDLBitRange;
 use std::iter::FromIterator;
 
 // Trying to make these work with trait bounds is literally too hard
