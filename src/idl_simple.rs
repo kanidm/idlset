@@ -1,7 +1,7 @@
 use idlset::AndNot;
+use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
 use std::slice;
-use std::iter::FromIterator;
 
 #[derive(Debug, PartialEq)]
 pub struct IDLSimple(Vec<u64>);
@@ -34,11 +34,10 @@ impl IDLSimple {
         let &IDLSimple(ref list) = self;
         list.len()
     }
-
 }
 
 impl FromIterator<u64> for IDLSimple {
-    fn from_iter<I: IntoIterator<Item=u64>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
         let mut list = Vec::with_capacity(8);
         for i in iter {
             list.push(i);
@@ -75,12 +74,10 @@ impl<'b> IntoIterator for &'b IDLSimple {
     }
 }
 
-impl BitAnd for IDLSimple
-{
+impl BitAnd for IDLSimple {
     type Output = Self;
 
     fn bitand(self, other: Self) -> Self {
-
         if self.0.len() == 1 {
             return other.bstbitand(self.0.first().unwrap());
         } else if other.0.len() == 1 {
@@ -112,15 +109,12 @@ impl BitAnd for IDLSimple
             } else {
                 rnext = riter.next();
             }
-
         }
         result
-
     }
 }
 
-impl BitOr for IDLSimple
-{
+impl BitOr for IDLSimple {
     type Output = Self;
 
     fn bitor(self, IDLSimple(rhs): Self) -> Self {
@@ -149,8 +143,7 @@ impl BitOr for IDLSimple
                 r
             };
             result.push_id(n.clone());
-
-        };
+        }
 
         while lnext.is_some() {
             let l = lnext.unwrap();
@@ -194,8 +187,7 @@ impl AndNot for IDLSimple {
             } else if l > r {
                 rnext = riter.next();
             }
-
-        };
+        }
 
         /* Push the remaining A set elements. */
         while lnext.is_some() {
@@ -208,11 +200,10 @@ impl AndNot for IDLSimple {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     // use test::Bencher;
-    use super::{IDLSimple, AndNot};
+    use super::{AndNot, IDLSimple};
     use std::iter::FromIterator;
 
     #[test]
@@ -237,9 +228,13 @@ mod tests {
 
     #[test]
     fn test_simple_intersection_4() {
-        let idl_a = IDLSimple::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_a = IDLSimple::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
         let idl_b = IDLSimple::from_iter(1..1024);
-        let idl_expect = IDLSimple::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_expect = IDLSimple::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
@@ -265,12 +260,11 @@ mod tests {
         assert_eq!(idl_result, idl_expect);
     }
 
-
     #[test]
     fn test_simple_union_1() {
-        let idl_a = IDLSimple::from_iter(vec![1,2,3]);
+        let idl_a = IDLSimple::from_iter(vec![1, 2, 3]);
         let idl_b = IDLSimple::from_iter(vec![2]);
-        let idl_expect = IDLSimple::from_iter(vec![1,2,3]);
+        let idl_expect = IDLSimple::from_iter(vec![1, 2, 3]);
 
         let idl_result = idl_a | idl_b;
         assert_eq!(idl_result, idl_expect);
@@ -278,9 +272,9 @@ mod tests {
 
     #[test]
     fn test_simple_union_2() {
-        let idl_a = IDLSimple::from_iter(vec![1,2,3]);
-        let idl_b = IDLSimple::from_iter(vec![4,67]);
-        let idl_expect = IDLSimple::from_iter(vec![1,2,3,4,67]);
+        let idl_a = IDLSimple::from_iter(vec![1, 2, 3]);
+        let idl_b = IDLSimple::from_iter(vec![4, 67]);
+        let idl_expect = IDLSimple::from_iter(vec![1, 2, 3, 4, 67]);
 
         let idl_result = idl_a | idl_b;
         assert_eq!(idl_result, idl_expect);
@@ -288,7 +282,9 @@ mod tests {
 
     #[test]
     fn test_simple_union_3() {
-        let idl_a = IDLSimple::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_a = IDLSimple::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
         let idl_b = IDLSimple::from_iter(1..1024);
         let idl_expect = IDLSimple::from_iter(1..1024);
 
@@ -296,13 +292,11 @@ mod tests {
         assert_eq!(idl_result, idl_expect);
     }
 
-
-
     #[test]
     fn test_simple_not_1() {
-        let idl_a = IDLSimple::from_iter(vec![1,2,3,4,5,6]);
-        let idl_b = IDLSimple::from_iter(vec![3,4]);
-        let idl_expect = IDLSimple::from_iter(vec![1,2,5,6]);
+        let idl_a = IDLSimple::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLSimple::from_iter(vec![3, 4]);
+        let idl_expect = IDLSimple::from_iter(vec![1, 2, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -310,9 +304,9 @@ mod tests {
 
     #[test]
     fn test_simple_not_2() {
-        let idl_a = IDLSimple::from_iter(vec![1,2,3,4,5,6]);
+        let idl_a = IDLSimple::from_iter(vec![1, 2, 3, 4, 5, 6]);
         let idl_b = IDLSimple::from_iter(vec![10]);
-        let idl_expect = IDLSimple::from_iter(vec![1,2,3,4,5,6]);
+        let idl_expect = IDLSimple::from_iter(vec![1, 2, 3, 4, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -320,13 +314,12 @@ mod tests {
 
     #[test]
     fn test_simple_not_3() {
-        let idl_a = IDLSimple::from_iter(vec![2,3,4,5,6]);
+        let idl_a = IDLSimple::from_iter(vec![2, 3, 4, 5, 6]);
         let idl_b = IDLSimple::from_iter(vec![1]);
-        let idl_expect = IDLSimple::from_iter(vec![2,3,4,5,6]);
+        let idl_expect = IDLSimple::from_iter(vec![2, 3, 4, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 
 }
-

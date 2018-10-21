@@ -1,4 +1,3 @@
-
 //! IDLSet - Fast u64 integer set operations
 //!
 //! IDLSet is a specialised library for fast logical set operations on
@@ -19,10 +18,10 @@
 
 #![warn(missing_docs)]
 
+use std::cmp::Ordering;
+use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
 use std::{fmt, slice};
-use std::iter::FromIterator;
-use std::cmp::Ordering;
 
 /// Bit trait representing the equivalent of a & (!b). This allows set operations
 /// such as "The set A does not contain any element of set B".
@@ -152,9 +151,7 @@ pub struct IDLBitRange {
 impl IDLBitRange {
     /// Construct a new, empty set.
     pub fn new() -> Self {
-        IDLBitRange {
-            list: Vec::new(),
-        }
+        IDLBitRange { list: Vec::new() }
     }
 
     /// Construct a set containing a single initial value. This is a special
@@ -257,10 +254,8 @@ impl FromIterator<u64> for IDLBitRange {
     /// the input is sorted. You must sort this either via `Vec` sorting
     /// or using a sorted type like BTreeMap. If an unsorted list is
     /// provided an error is returned
-    fn from_iter<I: IntoIterator<Item=u64>>(iter: I) -> Self {
-        let mut new = IDLBitRange {
-            list: Vec::new(),
-        };
+    fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
+        let mut new = IDLBitRange { list: Vec::new() };
 
         let mut max_seen = 0;
         for i in iter {
@@ -277,8 +272,7 @@ impl FromIterator<u64> for IDLBitRange {
     }
 }
 
-impl BitAnd for IDLBitRange
-{
+impl BitAnd for IDLBitRange {
     type Output = Self;
 
     /// Perform an And (intersection) operation between two sets. This returns
@@ -332,14 +326,12 @@ impl BitAnd for IDLBitRange
             } else {
                 rnextrange = riter.next();
             }
-
         }
         result
     }
 }
 
-impl BitOr for IDLBitRange
-{
+impl BitOr for IDLBitRange {
     type Output = Self;
 
     /// Perform an Or (union) operation between two sets. This returns
@@ -509,7 +501,7 @@ pub struct IDLBitRangeIter<'a> {
     curbit: u64,
 }
 
-impl<'a>Iterator for IDLBitRangeIter<'a> {
+impl<'a> Iterator for IDLBitRangeIter<'a> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
@@ -549,7 +541,11 @@ impl<'a> IntoIterator for &'a IDLBitRange {
 
 impl fmt::Debug for IDLBitRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "IDLBitRange (compressed) {:?} (decompressed) [ ", self.list).unwrap();
+        write!(
+            f,
+            "IDLBitRange (compressed) {:?} (decompressed) [ ",
+            self.list
+        ).unwrap();
         for id in self {
             write!(f, "{}, ", id).unwrap();
         }
@@ -557,11 +553,10 @@ impl fmt::Debug for IDLBitRange {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     // use test::Bencher;
-    use super::{IDLBitRange, AndNot};
+    use super::{AndNot, IDLBitRange};
     use std::iter::FromIterator;
 
     #[test]
@@ -621,7 +616,6 @@ mod tests {
         let idl_b = IDLBitRange::from_iter(vec![4, 67]);
         let idl_expect = IDLBitRange::new();
 
-
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
     }
@@ -638,9 +632,13 @@ mod tests {
 
     #[test]
     fn test_range_intersection_4() {
-        let idl_a = IDLBitRange::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
         let idl_b = IDLBitRange::from_iter(1..1024);
-        let idl_expect = IDLBitRange::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_expect = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
@@ -668,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_range_union_1() {
-        let idl_a = IDLBitRange::from_iter(vec![1,2,3]);
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
         let idl_b = IDLBitRange::from_iter(vec![2]);
         let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
 
@@ -678,9 +676,9 @@ mod tests {
 
     #[test]
     fn test_range_union_2() {
-        let idl_a = IDLBitRange::from_iter(vec![1,2,3]);
-        let idl_b = IDLBitRange::from_iter(vec![4,67]);
-        let idl_expect = IDLBitRange::from_iter(vec![1,2,3,4,67]);
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_b = IDLBitRange::from_iter(vec![4, 67]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 67]);
 
         let idl_result = idl_a | idl_b;
         assert_eq!(idl_result, idl_expect);
@@ -688,7 +686,9 @@ mod tests {
 
     #[test]
     fn test_range_union_3() {
-        let idl_a = IDLBitRange::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900]);
+        let idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
         let idl_b = IDLBitRange::from_iter(1..1024);
         let idl_expect = IDLBitRange::from_iter(1..1024);
 
@@ -698,9 +698,9 @@ mod tests {
 
     #[test]
     fn test_range_not_1() {
-        let idl_a = IDLBitRange::from_iter(vec![1,2,3,4,5,6]);
-        let idl_b = IDLBitRange::from_iter(vec![3,4]);
-        let idl_expect = IDLBitRange::from_iter(vec![1,2,5,6]);
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![3, 4]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -708,9 +708,9 @@ mod tests {
 
     #[test]
     fn test_range_not_2() {
-        let idl_a = IDLBitRange::from_iter(vec![1,2,3,4,5,6]);
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
         let idl_b = IDLBitRange::from_iter(vec![10]);
-        let idl_expect = IDLBitRange::from_iter(vec![1,2,3,4,5,6]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -718,12 +718,11 @@ mod tests {
 
     #[test]
     fn test_range_not_3() {
-        let idl_a = IDLBitRange::from_iter(vec![2,3,4,5,6]);
+        let idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
         let idl_b = IDLBitRange::from_iter(vec![1]);
-        let idl_expect = IDLBitRange::from_iter(vec![2,3,4,5,6]);
+        let idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 }
-
