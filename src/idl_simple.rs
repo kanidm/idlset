@@ -1,9 +1,8 @@
 use idlset::IDL;
 use idlset::AndNot;
 use std::ops::{BitAnd, BitOr};
-use std::{fmt, slice};
+use std::slice;
 use std::iter::FromIterator;
-use std::cmp::Ordering;
 
 #[derive(Debug, PartialEq)]
 pub struct IDLSimple(Vec<u64>);
