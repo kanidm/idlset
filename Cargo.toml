@@ -10,7 +10,7 @@ repostiory = "https://github.com/Firstyear/idlset/"
 readme = "README.md"
 keywords = ["data-structures", "sets", "compression", "u64"]
 categories = ["data-structures", "algorithms", "compression"]
-license = " LGPL-3.0-only"
+license = "MPL-2.0"
 license-file = "LICENSE.md"
 
 [dependencies]
