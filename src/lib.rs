@@ -250,10 +250,9 @@ impl IDLBitRange {
 }
 
 impl FromIterator<u64> for IDLBitRange {
-    /// Build an IDLBitRange from at iterator. This does *not* assume
-    /// the input is sorted. You must sort this either via `Vec` sorting
-    /// or using a sorted type like BTreeMap. If an unsorted list is
-    /// provided an error is returned
+    /// Build an IDLBitRange from at iterator. If you provide a sorted input, a fast append
+    /// mode is used. Unsorted inputs use a slower insertion sort method
+    /// instead.
     fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
         let mut new = IDLBitRange { list: Vec::new() };
 
