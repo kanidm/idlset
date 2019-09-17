@@ -197,7 +197,7 @@ impl IDLBitRange {
     }
 
     /// Insert an id into the set, correctly sorted.
-    fn insert_id(&mut self, value: u64) {
+    pub fn insert_id(&mut self, value: u64) {
         // Determine our range
         let bvalue: u64 = value % 64;
         let range: u64 = value - bvalue;
