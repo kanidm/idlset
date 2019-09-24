@@ -18,6 +18,9 @@
 
 #![warn(missing_docs)]
 
+#[macro_use]
+extern crate serde_derive;
+
 use std::cmp::Ordering;
 use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
@@ -37,7 +40,7 @@ pub trait AndNot<RHS = Self> {
 }
 
 /// The core representation of sets of integers in compressed format.
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct IDLRange {
     range: u64,
     mask: u64,
@@ -143,7 +146,7 @@ impl IDLRange {
 /// let idl_expect = IDLBitRange::from_iter(vec![2]);
 /// assert_eq!(idl_result, idl_expect);
 /// ```
-#[derive(PartialEq)]
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct IDLBitRange {
     list: Vec<IDLRange>,
 }
@@ -217,6 +220,31 @@ impl IDLBitRange {
         }
     }
 
+    /// Remove an id from the set, leaving it correctly sorted. Note this doesn't purge
+    /// unused IdlRange tuples, so this may still occupy memory even if empty.
+    ///
+    /// If the value is not present, no action is taken.
+    pub fn remove_id(&mut self, value: u64) {
+        // Determine our range
+        let bvalue: u64 = value % 64;
+        let range: u64 = value - bvalue;
+
+        // We make a dummy range and mask to find our range
+        let candidate = IDLRange::new(range, 1 << bvalue);
+
+        self.list.binary_search(&candidate)
+            .map(|idx| {
+                // The listed range would contain our bit.
+                // So we need to remove this, leaving all other bits in place.
+                //
+                // To do this, we not the candidate, so all other bits remain,
+                // then we perform and &= so that the existing bits survive.
+                let mut existing = self.list.get_mut(idx).unwrap();
+
+                existing.mask &= (!candidate.mask);
+            });
+    }
+
     /// Push an id into the set. The value is inserted onto the tail of the set
     /// which may cause you to break the structure if your input isn't sorted.
     /// You probably want `insert_id` instead.
@@ -240,7 +268,7 @@ impl IDLBitRange {
     }
 
     /// Returns the number of ids in the set.
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         // Today this is really inefficient using an iter to collect
         // and reduce the set. We could store a .count in the struct
         // if demand was required ...
@@ -453,6 +481,9 @@ impl AndNot for IDLBitRange {
                 lnextrange = liter.next();
                 rnextrange = riter.next();
             } else if l.range < r.range {
+                // if the left range isn't in the right, just push it to the set and move
+                // on.
+                result.list.push(l.clone());
                 lnextrange = liter.next();
             } else {
                 rnextrange = riter.next();
@@ -573,6 +604,17 @@ mod tests {
         assert!(idl_a.contains(2));
         assert!(!idl_a.contains(3));
         assert!(!idl_a.contains(65));
+    }
+
+    #[test]
+    fn test_remove_id() {
+        let mut idl_a = IDLBitRange::from_iter(vec![0, 1, 2, 3, 4]);
+        let idl_ex = IDLBitRange::from_iter(vec![0, 1, 3, 4]);
+        idl_a.remove_id(2);
+        assert!(idl_ex == idl_a);
+        // Removing twice does nothing
+        idl_a.remove_id(2);
+        assert!(idl_ex == idl_a);
     }
 
     #[test]
@@ -720,6 +762,16 @@ mod tests {
         let idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
         let idl_b = IDLBitRange::from_iter(vec![1]);
         let idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_not_4() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let idl_b = IDLBitRange::from_iter(vec![65]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 64, 66]);
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
