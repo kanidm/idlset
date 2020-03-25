@@ -20,11 +20,19 @@
 
 #[macro_use]
 extern crate serde_derive;
+extern crate smallvec;
+
+use smallvec::SmallVec;
 
 use std::cmp::Ordering;
 use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
 use std::{fmt, slice};
+
+/// Default number of IDL ranges to keep in stack before we spill into heap. As many
+/// operations in a system like kanidm are either single item indexes (think equality)
+/// or very large indexes (think pres, class), we can keep this small.
+const DEFAULT_HEAP_ALLOC: usize = 2;
 
 /// Bit trait representing the equivalent of a & (!b). This allows set operations
 /// such as "The set A does not contain any element of set B".
@@ -148,13 +156,15 @@ impl IDLRange {
 /// ```
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct IDLBitRange {
-    list: Vec<IDLRange>,
+    list: SmallVec<[IDLRange; DEFAULT_HEAP_ALLOC]>,
 }
 
 impl IDLBitRange {
     /// Construct a new, empty set.
     pub fn new() -> Self {
-        IDLBitRange { list: Vec::new() }
+        IDLBitRange {
+            list: SmallVec::new(),
+        }
     }
 
     /// Construct a set containing a single initial value. This is a special
@@ -232,17 +242,16 @@ impl IDLBitRange {
         // We make a dummy range and mask to find our range
         let candidate = IDLRange::new(range, 1 << bvalue);
 
-        self.list.binary_search(&candidate)
-            .map(|idx| {
-                // The listed range would contain our bit.
-                // So we need to remove this, leaving all other bits in place.
-                //
-                // To do this, we not the candidate, so all other bits remain,
-                // then we perform and &= so that the existing bits survive.
-                let mut existing = self.list.get_mut(idx).unwrap();
+        self.list.binary_search(&candidate).map(|idx| {
+            // The listed range would contain our bit.
+            // So we need to remove this, leaving all other bits in place.
+            //
+            // To do this, we not the candidate, so all other bits remain,
+            // then we perform and &= so that the existing bits survive.
+            let mut existing = self.list.get_mut(idx).unwrap();
 
-                existing.mask &= (!candidate.mask);
-            });
+            existing.mask &= (!candidate.mask);
+        });
     }
 
     /// Push an id into the set. The value is inserted onto the tail of the set
@@ -282,7 +291,9 @@ impl FromIterator<u64> for IDLBitRange {
     /// mode is used. Unsorted inputs use a slower insertion sort method
     /// instead.
     fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
-        let mut new = IDLBitRange { list: Vec::new() };
+        let mut new = IDLBitRange {
+            list: SmallVec::new(),
+        };
 
         let mut max_seen = 0;
         for i in iter {
@@ -575,7 +586,8 @@ impl fmt::Debug for IDLBitRange {
             f,
             "IDLBitRange (compressed) {:?} (decompressed) [ ",
             self.list
-        ).unwrap();
+        )
+        .unwrap();
         for id in self {
             write!(f, "{}, ", id).unwrap();
         }
