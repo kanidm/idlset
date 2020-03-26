@@ -20,8 +20,10 @@
 
 #[macro_use]
 extern crate serde_derive;
-extern crate smallvec;
 
+#[cfg(feature = "use_smallvec")]
+extern crate smallvec;
+#[cfg(feature = "use_smallvec")]
 use smallvec::SmallVec;
 
 use std::cmp::Ordering;
@@ -32,7 +34,8 @@ use std::{fmt, slice};
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
 /// or very large indexes (think pres, class), we can keep this small.
-const DEFAULT_HEAP_ALLOC: usize = 2;
+#[cfg(feature = "use_smallvec")]
+const DEFAULT_STACK_ALLOC: usize = 1;
 
 /// Bit trait representing the equivalent of a & (!b). This allows set operations
 /// such as "The set A does not contain any element of set B".
@@ -156,14 +159,29 @@ impl IDLRange {
 /// ```
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct IDLBitRange {
-    list: SmallVec<[IDLRange; DEFAULT_HEAP_ALLOC]>,
+    #[cfg(not(feature = "use_smallvec"))]
+    list: Vec<IDLRange>,
+    #[cfg(feature = "use_smallvec")]
+    list: SmallVec<[IDLRange; DEFAULT_STACK_ALLOC]>,
 }
 
 impl IDLBitRange {
     /// Construct a new, empty set.
     pub fn new() -> Self {
         IDLBitRange {
+            #[cfg(not(feature = "use_smallvec"))]
+            list: Vec::new(),
+            #[cfg(feature = "use_smallvec")]
             list: SmallVec::new(),
+        }
+    }
+
+    fn with_capacity(cap: usize) -> Self {
+        IDLBitRange {
+            #[cfg(not(feature = "use_smallvec"))]
+            list: Vec::with_capacity(cap),
+            #[cfg(feature = "use_smallvec")]
+            list: SmallVec::with_capacity(cap),
         }
     }
 
@@ -176,6 +194,8 @@ impl IDLBitRange {
         new
     }
 
+    /// This does an optimised single and operation in the case
+    /// one of the candidates has a single item. See bitand for more.
     fn bstbitand(&self, candidate: &IDLRange) -> Self {
         let mut result = IDLBitRange::new();
         if let Ok(idx) = self.list.binary_search(candidate) {
@@ -284,6 +304,13 @@ impl IDLBitRange {
         // Right now, this would require a complete walk of the bitmask.
         self.into_iter().fold(0, |acc, _| acc + 1)
     }
+
+    /// Show how many ranges we hold
+    #[inline(always)]
+    fn len_range(&self) -> usize {
+        self.list.len()
+    }
+
 }
 
 impl FromIterator<u64> for IDLBitRange {
@@ -291,12 +318,18 @@ impl FromIterator<u64> for IDLBitRange {
     /// mode is used. Unsorted inputs use a slower insertion sort method
     /// instead.
     fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+
+        let (lower_bound, _) = iter.size_hint();
         let mut new = IDLBitRange {
-            list: SmallVec::new(),
+            #[cfg(feature = "use_smallvec")]
+            list: SmallVec::with_capacity(lower_bound),
+            #[cfg(not(feature = "use_smallvec"))]
+            list: Vec::with_capacity(lower_bound),
         };
 
         let mut max_seen = 0;
-        for i in iter {
+        iter.for_each(|i| {
             if i >= max_seen {
                 // if we have a sorted list, we can take a fast append path.
                 new.push_id(i);
@@ -305,7 +338,7 @@ impl FromIterator<u64> for IDLBitRange {
                 // if not, we have to bst each time to get the right place.
                 new.insert_id(i);
             }
-        }
+        });
         new
     }
 }
@@ -329,17 +362,26 @@ impl BitAnd for IDLBitRange {
     /// assert_eq!(idl_result, idl_expect);
     /// ```
     fn bitand(self, rhs: Self) -> Self {
-        /*
-         * If one candidate range has only a single range,
-         * we can do a much faster search / return.
-         */
-        if self.list.len() == 1 {
+        let llen = self.len_range();
+        let rlen = rhs.len_range();
+
+        // If any list only has a single range element, then it's only possible
+        // for that single element to match in the other. In this case
+        // rather than doing a full walk of the vecs, binary search for
+        // the single item and compare it directly.
+        if llen == 1 {
             return rhs.bstbitand(self.list.first().unwrap());
-        } else if rhs.list.len() == 1 {
+        } else if rlen == 1 {
             return self.bstbitand(rhs.list.first().unwrap());
         }
 
-        let mut result = IDLBitRange::new();
+        // We only allocate the size of the smaller set since that's the
+        // theoretical max alloc needed.
+        let mut result = if llen < rlen {
+            IDLBitRange::with_capacity(llen)
+        } else {
+            IDLBitRange::with_capacity(rlen)
+        };
 
         let mut liter = self.list.iter();
         let mut riter = rhs.list.iter();
@@ -388,7 +430,16 @@ impl BitOr for IDLBitRange {
     /// assert_eq!(idl_result, idl_expect);
     /// ```
     fn bitor(self, rhs: Self) -> Self {
-        let mut result = IDLBitRange::new();
+        let llen = self.len_range();
+        let rlen = rhs.len_range();
+
+        // TODO: This could actually be llen + rlen for worst
+        // case situations.
+        let mut result = if llen > rlen {
+            IDLBitRange::with_capacity(llen)
+        } else {
+            IDLBitRange::with_capacity(rlen)
+        };
 
         let mut liter = self.list.iter();
         let mut riter = rhs.list.iter();
@@ -471,7 +522,16 @@ impl AndNot for IDLBitRange {
     /// assert_eq!(idl_result, idl_expect);
     /// ```
     fn andnot(self, rhs: Self) -> Self {
-        let mut result = IDLBitRange::new();
+        let llen = self.len_range();
+        let rlen = rhs.len_range();
+
+        // Must alloc size of the large, since all elements of r
+        // could not be in l.
+        let mut result = if llen > rlen {
+            IDLBitRange::with_capacity(llen)
+        } else {
+            IDLBitRange::with_capacity(rlen)
+        };
 
         let mut liter = self.list.iter();
         let mut riter = rhs.list.iter();

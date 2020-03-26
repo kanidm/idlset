@@ -1,6 +1,6 @@
 [package]
 name = "idlset"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["William Brown <william@blackhats.net.au>"]
 
 description = "Fast u64 set operations library"
@@ -22,3 +22,6 @@ smallvec = { version = "1.2", features = ["serde"] }
 name = "bench_idl"
 path = "src/bench.rs"
 
+
+[features]
+use_smallvec = []
