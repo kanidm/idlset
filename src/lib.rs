@@ -190,7 +190,9 @@ impl IDLBitRange {
     /// store uncompressed on disk.
     pub fn from_u64(id: u64) -> Self {
         let mut new = IDLBitRange::new();
-        new.push_id(id);
+        unsafe {
+            new.push_id(id);
+        }
         new
     }
 
@@ -277,7 +279,7 @@ impl IDLBitRange {
     /// Push an id into the set. The value is inserted onto the tail of the set
     /// which may cause you to break the structure if your input isn't sorted.
     /// You probably want `insert_id` instead.
-    fn push_id(&mut self, value: u64) {
+    pub unsafe fn push_id(&mut self, value: u64) {
         // Get what range this should be
         let bvalue: u64 = value % 64;
         let range: u64 = value - bvalue;
@@ -332,7 +334,9 @@ impl FromIterator<u64> for IDLBitRange {
         iter.for_each(|i| {
             if i >= max_seen {
                 // if we have a sorted list, we can take a fast append path.
-                new.push_id(i);
+                unsafe {
+                    new.push_id(i);
+                }
                 max_seen = i;
             } else {
                 // if not, we have to bst each time to get the right place.
