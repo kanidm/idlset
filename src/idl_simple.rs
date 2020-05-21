@@ -321,5 +321,4 @@ mod tests {
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
     }
-
 }

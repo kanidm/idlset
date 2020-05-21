@@ -312,7 +312,6 @@ impl IDLBitRange {
     fn len_range(&self) -> usize {
         self.list.len()
     }
-
 }
 
 impl FromIterator<u64> for IDLBitRange {
@@ -644,16 +643,25 @@ impl<'a> IntoIterator for &'a IDLBitRange {
     }
 }
 
+impl fmt::Display for IDLBitRange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "IDLBitRange (compressed) {:?} (decompressed) <optimised out>",
+            self.list
+        )
+    }
+}
+
 impl fmt::Debug for IDLBitRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "IDLBitRange (compressed) {:?} (decompressed) [ ",
             self.list
-        )
-        .unwrap();
+        )?;
         for id in self {
-            write!(f, "{}, ", id).unwrap();
+            write!(f, "{}, ", id)?;
         }
         write!(f, "]")
     }
@@ -670,8 +678,8 @@ mod tests {
         let idl_a = IDLBitRange::from_iter(vec![0]);
         let idl_b = IDLBitRange::from_iter(vec![0, 1, 2]);
         // FIXME: Implement a "contains" function.
-        println!("{:?}", idl_a);;
-        println!("{:?}", idl_b);;
+        println!("{:?}", idl_a);
+        println!("{:?}", idl_b);
     }
 
     #[test]
