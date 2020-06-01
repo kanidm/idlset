@@ -264,16 +264,21 @@ impl IDLBitRange {
         // We make a dummy range and mask to find our range
         let candidate = IDLRange::new(range, 1 << bvalue);
 
-        self.list.binary_search(&candidate).map(|idx| {
-            // The listed range would contain our bit.
-            // So we need to remove this, leaving all other bits in place.
-            //
-            // To do this, we not the candidate, so all other bits remain,
-            // then we perform and &= so that the existing bits survive.
-            let mut existing = self.list.get_mut(idx).unwrap();
+        match self.list.binary_search(&candidate) {
+            Ok(idx) => {
+                // The listed range would contain our bit.
+                // So we need to remove this, leaving all other bits in place.
+                //
+                // To do this, we not the candidate, so all other bits remain,
+                // then we perform and &= so that the existing bits survive.
+                let mut existing = self.list.get_mut(idx).unwrap();
 
-            existing.mask &= (!candidate.mask);
-        });
+                existing.mask &= !candidate.mask;
+            }
+            Err(_) => {
+                // No action required, the value is not in any range.
+            },
+        }
     }
 
     /// Push an id into the set. The value is inserted onto the tail of the set
@@ -298,7 +303,9 @@ impl IDLBitRange {
         self.list.push(newrange);
     }
 
-    /// Returns the number of ids in the set.
+    /// Returns the number of ids in the set. This operation iterates over
+    /// the set, decompressing it to count the ids, which MAY be slow. If
+    /// you want to see if the set is empty, us `is_empty()`
     pub fn len(&self) -> usize {
         // Today this is really inefficient using an iter to collect
         // and reduce the set. We could store a .count in the struct
@@ -307,7 +314,13 @@ impl IDLBitRange {
         self.into_iter().fold(0, |acc, _| acc + 1)
     }
 
-    /// Show how many ranges we hold
+    /// Show if this IDL set contains no elements
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.list.len() == 0
+    }
+
+    /// Show how many ranges we hold in this idlset.
     #[inline(always)]
     fn len_range(&self) -> usize {
         self.list.len()
@@ -647,8 +660,8 @@ impl fmt::Display for IDLBitRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "IDLBitRange (compressed) {:?} (decompressed) <optimised out>",
-            self.list
+            "IDLBitRange (compressed ranges) {:?} (decompressed) <optimised out>",
+            self.list.len()
         )
     }
 }
