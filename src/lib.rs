@@ -252,8 +252,7 @@ impl IDLBitRange {
         }
     }
 
-    /// Remove an id from the set, leaving it correctly sorted. Note this doesn't purge
-    /// unused IdlRange tuples, so this may still occupy memory even if empty.
+    /// Remove an id from the set, leaving it correctly sorted.
     ///
     /// If the value is not present, no action is taken.
     pub fn remove_id(&mut self, value: u64) {
@@ -274,6 +273,11 @@ impl IDLBitRange {
                 let mut existing = self.list.get_mut(idx).unwrap();
 
                 existing.mask &= !candidate.mask;
+
+                if existing.mask == 0 {
+                    // No more items in this range, remove it.
+                    self.list.remove(idx);
+                }
             }
             Err(_) => {
                 // No action required, the value is not in any range.
