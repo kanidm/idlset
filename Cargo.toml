@@ -13,10 +13,10 @@ categories = ["data-structures", "algorithms", "compression"]
 license = "MPL-2.0"
 
 [dependencies]
-time = "0.1"
+time = "0.2"
 serde = "1.0"
 serde_derive = "1.0"
-smallvec = { version = "1.2", features = ["serde"] }
+smallvec = { version = "1.4", features = ["serde"] }
 
 [[bin]]
 name = "bench_idl"

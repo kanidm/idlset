@@ -3,6 +3,8 @@ extern crate time;
 
 mod idl_simple;
 
+use time::Instant;
+
 use idl_simple::IDLSimple;
 use idlset::IDLBitRange;
 use std::iter::FromIterator;
@@ -30,44 +32,44 @@ fn bench_simple_union(id: &str, a: Vec<u64>, b: Vec<u64>) {
     let idl_a = IDLSimple::from_iter(a);
     let idl_b = IDLSimple::from_iter(b);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a | idl_b;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple union {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple union {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_range_union(id: &str, a: Vec<u64>, b: Vec<u64>) {
     let idl_a = IDLBitRange::from_iter(a);
     let idl_b = IDLBitRange::from_iter(b);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a | idl_b;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range union  {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range union  {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_simple_intersection(id: &str, a: Vec<u64>, b: Vec<u64>) {
     let idl_a = IDLSimple::from_iter(a);
     let idl_b = IDLSimple::from_iter(b);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple inter {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple inter {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_range_intersection(id: &str, a: Vec<u64>, b: Vec<u64>) {
     let idl_a = IDLBitRange::from_iter(a);
     let idl_b = IDLBitRange::from_iter(b);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range inter  {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range inter  {}: {:?} -> {}", id, end - start, result);
 }
 
 fn test_duplex(id: &str, a: Vec<u64>, b: Vec<u64>) {
@@ -83,11 +85,11 @@ fn bench_t_simple_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLSimple::from_iter(b);
     let idl_c = IDLSimple::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a | idl_b | idl_c;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple 3 union {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple 3 union {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_t_range_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -95,11 +97,11 @@ fn bench_t_range_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLBitRange::from_iter(b);
     let idl_c = IDLBitRange::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a | idl_b | idl_c;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range 3  union {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range 3  union {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_t_simple_intersection(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -107,11 +109,11 @@ fn bench_t_simple_intersection(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) 
     let idl_b = IDLSimple::from_iter(b);
     let idl_c = IDLSimple::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b & idl_c;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple 3 inter {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple 3 inter {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_t_range_intersection(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -119,11 +121,11 @@ fn bench_t_range_intersection(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLBitRange::from_iter(b);
     let idl_c = IDLBitRange::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b & idl_c;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range 3  inter {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range 3  inter {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_t_simple_inter_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -131,11 +133,11 @@ fn bench_t_simple_inter_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLSimple::from_iter(b);
     let idl_c = IDLSimple::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b | idl_c;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple 3 in/un {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple 3 in/un {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_t_range_inter_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -143,11 +145,11 @@ fn bench_t_range_inter_union(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLBitRange::from_iter(b);
     let idl_c = IDLBitRange::from_iter(c);
 
-    let start = time::now();
+    let start = Instant::now();
     let idl_result = idl_a & idl_b | idl_c;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range 3  in/un {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range 3  in/un {}: {:?} -> {}", id, end - start, result);
 }
 
 fn test_triplex(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -167,7 +169,7 @@ fn bench_c_range(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLBitRange::from_iter(b);
     let uids: Vec<IDLBitRange> = c.iter().map(|&x| IDLBitRange::from_u64(x)).collect();
 
-    let start = time::now();
+    let start = Instant::now();
     let mut uid_iter = uids.into_iter();
 
     // Get the first range
@@ -177,8 +179,8 @@ fn bench_c_range(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
 
     let idl_result = idl_a & idl_b & idl_inter;
     let result = range_consume_results(&idl_result);
-    let end = time::now();
-    println!("range 3  comp  {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("range 3  comp  {}: {:?} -> {}", id, end - start, result);
 }
 
 fn bench_c_simple(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
@@ -186,7 +188,7 @@ fn bench_c_simple(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
     let idl_b = IDLSimple::from_iter(b);
     let uids: Vec<IDLSimple> = c.iter().map(|&x| IDLSimple::from_u64(x)).collect();
 
-    let start = time::now();
+    let start = Instant::now();
     let mut uid_iter = uids.into_iter();
 
     // Get the first range
@@ -196,8 +198,8 @@ fn bench_c_simple(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
 
     let idl_result = idl_a & idl_b & idl_inter;
     let result = simple_consume_results(&idl_result);
-    let end = time::now();
-    println!("simple 3 comp  {}: {} -> {}", id, end - start, result);
+    let end = Instant::now();
+    println!("simple 3 comp  {}: {:?} -> {}", id, end - start, result);
 }
 
 fn test_complex(id: &str, a: Vec<u64>, b: Vec<u64>, c: Vec<u64>) {
