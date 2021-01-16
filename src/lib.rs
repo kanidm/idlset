@@ -281,7 +281,7 @@ impl IDLBitRange {
             }
             Err(_) => {
                 // No action required, the value is not in any range.
-            },
+            }
         }
     }
 
@@ -316,7 +316,9 @@ impl IDLBitRange {
         // and reduce the set. We could store a .count in the struct
         // if demand was required ...
         // Right now, this would require a complete walk of the bitmask.
-        self.into_iter().fold(0, |acc, _| acc + 1)
+        self.list
+            .iter()
+            .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc)
     }
 
     /// Returns if the number of ids in this set exceed this threshold. While
@@ -328,10 +330,10 @@ impl IDLBitRange {
     #[inline(always)]
     pub fn below_threshold(&self, threshold: usize) -> bool {
         let mut ic: usize = 0;
-        for _item in self.into_iter() {
-            ic += 1;
+        for i in self.list.iter() {
+            ic += i.mask.count_ones() as usize;
             if ic >= threshold {
-                return false
+                return false;
             }
         }
         true
