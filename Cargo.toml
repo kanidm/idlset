@@ -1,6 +1,6 @@
 [package]
 name = "idlset"
-version = "0.1.11"
+version = "0.1.12"
 authors = ["William Brown <william@blackhats.net.au>"]
 
 description = "Fast u64 set operations library"
@@ -16,12 +16,12 @@ license = "MPL-2.0"
 time = "0.2"
 serde = "1.0"
 serde_derive = "1.0"
-smallvec = { version = "1.4", features = ["serde"] }
+smallvec = { version = "1.4", features = ["serde"], optional = true }
 
 [[bin]]
 name = "bench_idl"
 path = "src/bench.rs"
 
-
 [features]
-use_smallvec = []
+use_smallvec = ["smallvec"]
+tracksize = []

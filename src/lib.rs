@@ -310,12 +310,31 @@ impl IDLBitRange {
     /// Returns the number of ids in the set. This operation iterates over
     /// the set, decompressing it to count the ids, which MAY be slow. If
     /// you want to see if the set is empty, us `is_empty()`
+    #[inline(always)]
     pub fn len(&self) -> usize {
         // Today this is really inefficient using an iter to collect
         // and reduce the set. We could store a .count in the struct
         // if demand was required ...
         // Right now, this would require a complete walk of the bitmask.
         self.into_iter().fold(0, |acc, _| acc + 1)
+    }
+
+    /// Returns if the number of ids in this set exceed this threshold. While
+    /// this must iterate to determine if this is true, since we shortcut return
+    /// in the check, on long sets we will not iterate over the complete content
+    /// making it faster than `len() < thresh`.
+    ///
+    /// Returns true if the set is smaller than threshold.
+    #[inline(always)]
+    pub fn below_threshold(&self, threshold: usize) -> bool {
+        let mut ic: usize = 0;
+        for _item in self.into_iter() {
+            ic += 1;
+            if ic >= threshold {
+                return false
+            }
+        }
+        true
     }
 
     /// Show if this IDL set contains no elements
@@ -326,7 +345,7 @@ impl IDLBitRange {
 
     /// Show how many ranges we hold in this idlset.
     #[inline(always)]
-    fn len_range(&self) -> usize {
+    pub fn len_range(&self) -> usize {
         self.list.len()
     }
 }
@@ -876,5 +895,18 @@ mod tests {
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_threshold() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let idl_b = IDLBitRange::from_iter(vec![65]);
+
+        assert!(idl_a.below_threshold(1) == false);
+        assert!(idl_a.below_threshold(6) == false);
+        assert!(idl_a.below_threshold(8) == true);
+
+        assert!(idl_a.below_threshold(1) == false);
+        assert!(idl_a.below_threshold(8) == true);
     }
 }
