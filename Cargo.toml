@@ -18,9 +18,12 @@ serde = "1.0"
 serde_derive = "1.0"
 smallvec = { version = "1.4", features = ["serde"], optional = true }
 
-[[bin]]
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
 name = "bench_idl"
-path = "src/bench.rs"
+harness = false
 
 [features]
 use_smallvec = ["smallvec"]
