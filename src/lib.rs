@@ -350,59 +350,19 @@ impl IDLBitRange {
     pub fn len_range(&self) -> usize {
         self.list.len()
     }
-}
 
-impl FromIterator<u64> for IDLBitRange {
-    /// Build an IDLBitRange from at iterator. If you provide a sorted input, a fast append
-    /// mode is used. Unsorted inputs use a slower insertion sort method
-    /// instead.
-    fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
-        let iter = iter.into_iter();
-
-        let (lower_bound, _) = iter.size_hint();
-        let mut new = IDLBitRange {
-            #[cfg(feature = "use_smallvec")]
-            list: SmallVec::with_capacity(lower_bound),
-            #[cfg(not(feature = "use_smallvec"))]
-            list: Vec::with_capacity(lower_bound),
-        };
-
-        let mut max_seen = 0;
-        iter.for_each(|i| {
-            if i >= max_seen {
-                // if we have a sorted list, we can take a fast append path.
-                unsafe {
-                    new.push_id(i);
-                }
-                max_seen = i;
-            } else {
-                // if not, we have to bst each time to get the right place.
-                new.insert_id(i);
-            }
-        });
-        new
+    /// Sum all the values contained into this set to yield a single result.
+    #[inline(always)]
+    pub fn sum(&self) -> u64 {
+        let mut result: u64 = 0;
+        for id in self {
+            result += id;
+        }
+        return result;
     }
-}
 
-impl BitAnd for IDLBitRange {
-    type Output = Self;
-
-    /// Perform an And (intersection) operation between two sets. This returns
-    /// a new set containing the results.
-    ///
-    /// # Examples
-    /// ```
-    /// # use idlset::IDLBitRange;
-    /// # use std::iter::FromIterator;
-    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
-    /// let idl_b = IDLBitRange::from_iter(vec![2]);
-    ///
-    /// let idl_result = idl_a & idl_b;
-    ///
-    /// let idl_expect = IDLBitRange::from_iter(vec![2]);
-    /// assert_eq!(idl_result, idl_expect);
-    /// ```
-    fn bitand(self, rhs: Self) -> Self {
+    #[inline(always)]
+    fn bitand_inner(&self, rhs: &Self) -> Self {
         let llen = self.len_range();
         let rlen = rhs.len_range();
 
@@ -450,27 +410,9 @@ impl BitAnd for IDLBitRange {
         }
         result
     }
-}
 
-impl BitOr for IDLBitRange {
-    type Output = Self;
-
-    /// Perform an Or (union) operation between two sets. This returns
-    /// a new set containing the results.
-    ///
-    /// # Examples
-    /// ```
-    /// # use idlset::IDLBitRange;
-    /// # use std::iter::FromIterator;
-    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
-    /// let idl_b = IDLBitRange::from_iter(vec![2]);
-    ///
-    /// let idl_result = idl_a | idl_b;
-    ///
-    /// let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
-    /// assert_eq!(idl_result, idl_expect);
-    /// ```
-    fn bitor(self, rhs: Self) -> Self {
+    #[inline(always)]
+    fn bitor_inner(&self, rhs: &Self) -> Self {
         let llen = self.len_range();
         let rlen = rhs.len_range();
 
@@ -524,45 +466,9 @@ impl BitOr for IDLBitRange {
         }
         result
     }
-}
 
-impl AndNot for IDLBitRange {
-    type Output = Self;
-
-    /// Perform an AndNot (exclude) operation between two sets. This returns
-    /// a new set containing the results. The set on the right is the candidate
-    /// set to exclude from the set of the left.
-    ///
-    /// # Examples
-    /// ```
-    /// // Note the change to import the AndNot trait.
-    /// use idlset::{IDLBitRange, AndNot};
-    /// # use std::iter::FromIterator;
-    ///
-    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
-    /// let idl_b = IDLBitRange::from_iter(vec![2]);
-    ///
-    /// let idl_result = idl_a.andnot(idl_b);
-    ///
-    /// let idl_expect = IDLBitRange::from_iter(vec![1, 3]);
-    /// assert_eq!(idl_result, idl_expect);
-    /// ```
-    ///
-    /// ```
-    /// // Note the change to import the AndNot trait.
-    /// use idlset::{IDLBitRange, AndNot};
-    /// # use std::iter::FromIterator;
-    ///
-    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
-    /// let idl_b = IDLBitRange::from_iter(vec![2]);
-    ///
-    /// // Note how reversing a and b here will return an empty set.
-    /// let idl_result = idl_b.andnot(idl_a);
-    ///
-    /// let idl_expect = IDLBitRange::new();
-    /// assert_eq!(idl_result, idl_expect);
-    /// ```
-    fn andnot(self, rhs: Self) -> Self {
+    #[inline(always)]
+    fn bitandnot_inner(&self, rhs: &Self) -> Self {
         let llen = self.len_range();
         let rlen = rhs.len_range();
 
@@ -610,6 +516,212 @@ impl AndNot for IDLBitRange {
             lnextrange = liter.next();
         }
         result
+    }
+}
+
+impl FromIterator<u64> for IDLBitRange {
+    /// Build an IDLBitRange from at iterator. If you provide a sorted input, a fast append
+    /// mode is used. Unsorted inputs use a slower insertion sort method
+    /// instead.
+    fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+
+        let (lower_bound, _) = iter.size_hint();
+        let mut new = IDLBitRange {
+            #[cfg(feature = "use_smallvec")]
+            list: SmallVec::with_capacity(lower_bound),
+            #[cfg(not(feature = "use_smallvec"))]
+            list: Vec::with_capacity(lower_bound),
+        };
+
+        let mut max_seen = 0;
+        iter.for_each(|i| {
+            if i >= max_seen {
+                // if we have a sorted list, we can take a fast append path.
+                unsafe {
+                    new.push_id(i);
+                }
+                max_seen = i;
+            } else {
+                // if not, we have to bst each time to get the right place.
+                new.insert_id(i);
+            }
+        });
+        new
+    }
+}
+
+impl BitAnd for &IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an And (intersection) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a & idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![2]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitand(self, rhs: &IDLBitRange) -> IDLBitRange {
+        self.bitand_inner(rhs)
+    }
+}
+
+impl BitAnd for IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an And (intersection) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a & idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![2]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitand(self, rhs: IDLBitRange) -> IDLBitRange {
+        self.bitand_inner(&rhs)
+    }
+}
+
+impl BitOr for &IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an Or (union) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a | idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitor(self, rhs: &IDLBitRange) -> IDLBitRange {
+        self.bitor_inner(rhs)
+    }
+}
+
+impl BitOr for IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an Or (union) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a | idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitor(self, rhs: Self) -> IDLBitRange {
+        self.bitor_inner(&rhs)
+    }
+}
+
+impl AndNot for IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an AndNot (exclude) operation between two sets. This returns
+    /// a new set containing the results. The set on the right is the candidate
+    /// set to exclude from the set of the left.
+    ///
+    /// # Examples
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a.andnot(idl_b);
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    ///
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// // Note how reversing a and b here will return an empty set.
+    /// let idl_result = idl_b.andnot(idl_a);
+    ///
+    /// let idl_expect = IDLBitRange::new();
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn andnot(self, rhs: Self) -> IDLBitRange {
+        self.bitandnot_inner(&rhs)
+    }
+}
+
+impl AndNot for &IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an AndNot (exclude) operation between two sets. This returns
+    /// a new set containing the results. The set on the right is the candidate
+    /// set to exclude from the set of the left.
+    ///
+    /// # Examples
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a.andnot(idl_b);
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    ///
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// // Note how reversing a and b here will return an empty set.
+    /// let idl_result = idl_b.andnot(idl_a);
+    ///
+    /// let idl_expect = IDLBitRange::new();
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn andnot(self, rhs: &IDLBitRange) -> IDLBitRange {
+        self.bitandnot_inner(rhs)
     }
 }
 
@@ -908,7 +1020,7 @@ mod tests {
         assert!(idl_a.below_threshold(6) == false);
         assert!(idl_a.below_threshold(8) == true);
 
-        assert!(idl_a.below_threshold(1) == false);
-        assert!(idl_a.below_threshold(8) == true);
+        assert!(idl_b.below_threshold(1) == false);
+        assert!(idl_b.below_threshold(8) == true);
     }
 }

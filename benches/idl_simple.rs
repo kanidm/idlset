@@ -30,9 +30,17 @@ impl IDLSimple {
         list.push(value)
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         let &IDLSimple(ref list) = self;
         list.len()
+    }
+
+    pub fn sum(&self) -> u64 {
+        let mut result: u64 = 0;
+        for id in self {
+            result += id;
+        }
+        return result;
     }
 }
 
@@ -74,10 +82,10 @@ impl<'b> IntoIterator for &'b IDLSimple {
     }
 }
 
-impl BitAnd for IDLSimple {
-    type Output = Self;
+impl BitAnd for &IDLSimple {
+    type Output = IDLSimple;
 
-    fn bitand(self, other: Self) -> Self {
+    fn bitand(self, other: Self) -> IDLSimple {
         if self.0.len() == 1 {
             return other.bstbitand(self.0.first().unwrap());
         } else if other.0.len() == 1 {
@@ -114,10 +122,10 @@ impl BitAnd for IDLSimple {
     }
 }
 
-impl BitOr for IDLSimple {
-    type Output = Self;
+impl BitOr for &IDLSimple {
+    type Output = IDLSimple;
 
-    fn bitor(self, IDLSimple(rhs): Self) -> Self {
+    fn bitor(self, IDLSimple(rhs): Self) -> IDLSimple {
         let IDLSimple(lhs) = self;
         let mut result = IDLSimple::new();
 
@@ -160,10 +168,10 @@ impl BitOr for IDLSimple {
     }
 }
 
-impl AndNot for IDLSimple {
-    type Output = Self;
+impl AndNot for &IDLSimple {
+    type Output = IDLSimple;
 
-    fn andnot(self, IDLSimple(rhs): Self) -> Self {
+    fn andnot(self, IDLSimple(rhs): Self) -> IDLSimple {
         let IDLSimple(lhs) = self;
         let mut result = IDLSimple::new();
 
@@ -202,7 +210,6 @@ impl AndNot for IDLSimple {
 
 #[cfg(test)]
 mod tests {
-    // use test::Bencher;
     use super::{AndNot, IDLSimple};
     use std::iter::FromIterator;
 
@@ -212,7 +219,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![2]);
         let idl_expect = IDLSimple::from_iter(vec![2]);
 
-        let idl_result = idl_a & idl_b;
+        let idl_result = &idl_a & &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -222,7 +229,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![4, 67]);
         let idl_expect = IDLSimple::new();
 
-        let idl_result = idl_a & idl_b;
+        let idl_result = &idl_a & &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -236,7 +243,7 @@ mod tests {
             2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
         ]);
 
-        let idl_result = idl_a & idl_b;
+        let idl_result = &idl_a & &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -246,7 +253,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(102400..307200);
         let idl_expect = IDLSimple::from_iter(102400..204800);
 
-        let idl_result = idl_a & idl_b;
+        let idl_result = &idl_a & &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -256,7 +263,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(102400..307200);
         let idl_expect = IDLSimple::from_iter(vec![307199]);
 
-        let idl_result = idl_a & idl_b;
+        let idl_result = &idl_a & &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -266,7 +273,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![2]);
         let idl_expect = IDLSimple::from_iter(vec![1, 2, 3]);
 
-        let idl_result = idl_a | idl_b;
+        let idl_result = &idl_a | &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -276,7 +283,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![4, 67]);
         let idl_expect = IDLSimple::from_iter(vec![1, 2, 3, 4, 67]);
 
-        let idl_result = idl_a | idl_b;
+        let idl_result = &idl_a | &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -288,7 +295,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(1..1024);
         let idl_expect = IDLSimple::from_iter(1..1024);
 
-        let idl_result = idl_a | idl_b;
+        let idl_result = &idl_a | &idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -298,7 +305,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![3, 4]);
         let idl_expect = IDLSimple::from_iter(vec![1, 2, 5, 6]);
 
-        let idl_result = idl_a.andnot(idl_b);
+        let idl_result = idl_a.andnot(&idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -308,7 +315,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![10]);
         let idl_expect = IDLSimple::from_iter(vec![1, 2, 3, 4, 5, 6]);
 
-        let idl_result = idl_a.andnot(idl_b);
+        let idl_result = idl_a.andnot(&idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -318,7 +325,7 @@ mod tests {
         let idl_b = IDLSimple::from_iter(vec![1]);
         let idl_expect = IDLSimple::from_iter(vec![2, 3, 4, 5, 6]);
 
-        let idl_result = idl_a.andnot(idl_b);
+        let idl_result = idl_a.andnot(&idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 }
