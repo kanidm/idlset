@@ -1,5 +1,6 @@
 use std::iter::FromIterator;
 use std::cmp::Ordering;
+use std::ops::BitAnd;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,7 +77,7 @@ impl IDLBitRange {
         }
     }
 
-    pub fn is_single(&self) -> bool {
+    pub(crate) fn is_single(&self) -> bool {
         match self.state {
             IDLState::Single(_) => true,
             _ => false,
@@ -254,14 +255,72 @@ impl IDLBitRange {
 
     #[inline(always)]
     fn bitand_inner(&self, rhs: &Self) -> Self {
-        unimplemented!();
-        /*
-        match (self, rhs) {
+        match (&self.state, &rhs.state) {
             (IDLState::Empty, _) |
             (_, IDLState::Empty) => IDLBitRange::new(),
-            (IDLState::Single(v1), IDLState::Single(v2))
+            (IDLState::Single(v1), IDLState::Single(v2)) => {
+                if v1 == v2 {
+                    IDLBitRange {
+                        state: IDLState::Single(*v1)
+                    }
+                } else {
+                    IDLBitRange::new()
+                }
+            }
+            (IDLState::Single(id), IDLState::Compressed(list)) |
+            (IDLState::Compressed(list), IDLState::Single(id)) => {
+                let id = *id;
+                let bvalue: u64 = id % 64;
+                let range: u64 = id - bvalue;
+                let mask = 1 << bvalue;
+
+                if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
+                    // We know this is safe and exists due to binary search.
+                    let existing = unsafe { list.get_unchecked(idx) };
+                    if (existing.mask & mask) > 0 {
+                        return IDLBitRange {
+                            state: IDLState::Single(id)
+                        };
+                    }
+                }
+                // Catch all, not found.
+                IDLBitRange::new()
+            }
+            (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
+                let mut nlist = Vec::new();
+                let mut liter = list1.iter();
+                let mut riter = list2.iter();
+
+                let mut lnextrange = liter.next();
+                let mut rnextrange = riter.next();
+
+                while lnextrange.is_some() && rnextrange.is_some() {
+                    let l = lnextrange.unwrap();
+                    let r = rnextrange.unwrap();
+
+                    if l.range == r.range {
+                        let mask = l.mask & r.mask;
+                        if mask > 0 {
+                            let newrange = IDLRange::new(l.range, mask);
+                            nlist.push(newrange);
+                        }
+                        lnextrange = liter.next();
+                        rnextrange = riter.next();
+                    } else if l.range < r.range {
+                        lnextrange = liter.next();
+                    } else {
+                        rnextrange = riter.next();
+                    }
+                }
+                if nlist.len() == 0 {
+                    IDLBitRange::new()
+                } else {
+                IDLBitRange {
+                    state: IDLState::Compressed(nlist)
+                }
+                }
+            }
         }
-        */
     }
 }
 
@@ -432,9 +491,121 @@ mod tests {
 
     #[test]
     fn test_range_intersection_1() {
+        let idl_a = IDLBitRange::new();
+        let idl_b = IDLBitRange::new();
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_2() {
+        let idl_a = IDLBitRange::new();
+        let idl_b = IDLBitRange::from_iter(vec![2]);
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+
+        let idl_a = IDLBitRange::from_iter(vec![2]);
+        let idl_b = IDLBitRange::new();
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_3() {
+        let idl_a = IDLBitRange::from_iter(vec![2]);
+        let idl_b = IDLBitRange::from_iter(vec![2]);
+        let idl_expect = IDLBitRange::from_iter(vec![2]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+
+        let idl_a = IDLBitRange::from_iter(vec![2]);
+        let idl_b = IDLBitRange::from_iter(vec![128]);
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_4() {
         let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
         let idl_b = IDLBitRange::from_iter(vec![2]);
         let idl_expect = IDLBitRange::from_iter(vec![2]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+
+        let idl_a = IDLBitRange::from_iter(vec![2]);
+        let idl_b = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_expect = IDLBitRange::from_iter(vec![2]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+
+        let idl_a = IDLBitRange::from_iter(vec![128]);
+        let idl_b = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_5() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_b = IDLBitRange::from_iter(vec![4, 67]);
+        let idl_expect = IDLBitRange::new();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_6() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 35, 64, 65, 128, 150]);
+        let idl_b = IDLBitRange::from_iter(vec![2, 3, 8, 35, 64, 128, 130, 150, 152, 180]);
+        let idl_expect = IDLBitRange::from_iter(vec![2, 3, 35, 64, 128, 150]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_7() {
+        let idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let idl_b = IDLBitRange::from_iter(1..1024);
+        let idl_expect = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_8() {
+        let idl_a = IDLBitRange::from_iter(1..204800);
+        let idl_b = IDLBitRange::from_iter(102400..307200);
+        let idl_expect = IDLBitRange::from_iter(102400..204800);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_intersection_9() {
+        let idl_a = IDLBitRange::from_iter(vec![307199]);
+        let idl_b = IDLBitRange::from_iter(102400..307200);
+        let idl_expect = IDLBitRange::from_iter(vec![307199]);
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
