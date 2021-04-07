@@ -23,6 +23,9 @@ extern crate serde_derive;
 
 #[cfg(feature = "use_smallvec")]
 extern crate smallvec;
+
+pub mod v2;
+
 #[cfg(feature = "use_smallvec")]
 use smallvec::SmallVec;
 
@@ -74,7 +77,6 @@ impl PartialOrd for IDLRange {
 impl PartialEq for IDLRange {
     fn eq(&self, other: &Self) -> bool {
         self.range == other.range
-        // && self.mask == other.mask
     }
 }
 
@@ -819,17 +821,13 @@ impl fmt::Debug for IDLBitRange {
 
 #[cfg(test)]
 mod tests {
-    // use test::Bencher;
     use super::{AndNot, IDLBitRange};
     use std::iter::FromIterator;
 
     #[test]
     fn test_store_zero() {
         let idl_a = IDLBitRange::from_iter(vec![0]);
-        let idl_b = IDLBitRange::from_iter(vec![0, 1, 2]);
-        // FIXME: Implement a "contains" function.
-        println!("{:?}", idl_a);
-        println!("{:?}", idl_b);
+        assert!(idl_a.contains(0));
     }
 
     #[test]
