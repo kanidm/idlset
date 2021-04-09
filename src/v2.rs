@@ -78,6 +78,12 @@ impl IDLBitRange {
         Self::default()
     }
 
+    pub fn from_u64(id: u64) -> Self {
+        IDLBitRange {
+            state: IDLState::Sparse(smallvec![id])
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
