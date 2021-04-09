@@ -20,15 +20,12 @@
 
 #[macro_use]
 extern crate serde_derive;
-
-#[cfg(feature = "use_smallvec")]
+#[macro_use]
 extern crate smallvec;
 
 pub mod v2;
 
-#[cfg(feature = "use_smallvec")]
 use smallvec::SmallVec;
-
 use std::cmp::Ordering;
 use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
@@ -37,7 +34,6 @@ use std::{fmt, slice};
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
 /// or very large indexes (think pres, class), we can keep this small.
-#[cfg(feature = "use_smallvec")]
 const DEFAULT_STACK_ALLOC: usize = 1;
 
 /// Bit trait representing the equivalent of a & (!b). This allows set operations
@@ -161,9 +157,6 @@ impl IDLRange {
 /// ```
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct IDLBitRange {
-    #[cfg(not(feature = "use_smallvec"))]
-    list: Vec<IDLRange>,
-    #[cfg(feature = "use_smallvec")]
     list: SmallVec<[IDLRange; DEFAULT_STACK_ALLOC]>,
 }
 
@@ -171,18 +164,12 @@ impl IDLBitRange {
     /// Construct a new, empty set.
     pub fn new() -> Self {
         IDLBitRange {
-            #[cfg(not(feature = "use_smallvec"))]
-            list: Vec::new(),
-            #[cfg(feature = "use_smallvec")]
             list: SmallVec::new(),
         }
     }
 
     fn with_capacity(cap: usize) -> Self {
         IDLBitRange {
-            #[cfg(not(feature = "use_smallvec"))]
-            list: Vec::with_capacity(cap),
-            #[cfg(feature = "use_smallvec")]
             list: SmallVec::with_capacity(cap),
         }
     }
@@ -530,10 +517,7 @@ impl FromIterator<u64> for IDLBitRange {
 
         let (lower_bound, _) = iter.size_hint();
         let mut new = IDLBitRange {
-            #[cfg(feature = "use_smallvec")]
             list: SmallVec::with_capacity(lower_bound),
-            #[cfg(not(feature = "use_smallvec"))]
-            list: Vec::with_capacity(lower_bound),
         };
 
         let mut max_seen = 0;

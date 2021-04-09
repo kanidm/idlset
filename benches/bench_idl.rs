@@ -7,6 +7,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use idl_simple::IDLSimple;
 use idlset::IDLBitRange;
+use idlset::v2::IDLBitRange as IDLBitRangeV2;
 use std::iter::FromIterator;
 
 // Trying to make these work with trait bounds is literally too hard
@@ -29,6 +30,15 @@ impl std::fmt::Display for RDuplex {
         write!(f, "{} - {}", self.0.len(), self.1.len())
     }
 }
+
+struct V2Duplex(IDLBitRangeV2, IDLBitRangeV2);
+
+impl std::fmt::Display for V2Duplex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} - {} {}", self.0.len(), self.0.is_compressed(), self.1.len(), self.1.is_compressed())
+    }
+}
+
 
 struct Triplex(Vec<u64>, Vec<u64>, Vec<u64>);
 
@@ -102,6 +112,11 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         IDLBitRange::from_iter(i.1.clone()),
     );
 
+    let mut v2i = V2Duplex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+    );
+
     group.bench_with_input(BenchmarkId::new("Simple", &si), &si, |t, SDuplex(a, b)| {
         t.iter(|| { b | a }.sum())
     });
@@ -110,7 +125,31 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &ri,
         |t, RDuplex(a, b)| t.iter(|| { b | a }.sum()),
     );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
+    );
+
+    v2i.0.compress();
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
+    );
+
+    v2i.1.compress();
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Compressed Compressed", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
+    );
     group.finish();
+
+    let mut v2i = V2Duplex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+    );
 
     let mut group = c.benchmark_group(&format!("{}_intersection", label));
     group.bench_with_input(BenchmarkId::new("Simple", &si), &si, |t, SDuplex(a, b)| {
@@ -121,6 +160,27 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &ri,
         |t, RDuplex(a, b)| t.iter(|| { b & a }.sum()),
     );
+
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
+    );
+
+    v2i.0.compress();
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
+    );
+
+    v2i.1.compress();
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2 Compressed Compressed", &ri),
+        &ri,
+        |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
+    );
+
     group.finish();
 }
 

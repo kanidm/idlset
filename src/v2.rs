@@ -1,6 +1,17 @@
+
 use std::iter::FromIterator;
 use std::cmp::Ordering;
 use std::ops::BitAnd;
+use smallvec::SmallVec;
+use std::slice;
+
+/// Default number of IDL ranges to keep in stack before we spill into heap. As many
+/// operations in a system like kanidm are either single item indexes (think equality)
+/// or very large indexes (think pres, class), we can keep this small.
+const DEFAULT_SPARSE_ALLOC: usize = 2;
+// const DEFAULT_COMP_ALLOC: usize = 2;
+// const DEFAULT_SPARSE_ALLOC: usize = 5 + 8;
+// const DEFAULT_COMP_ALLOC: usize = 2 + 4;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -31,10 +42,8 @@ impl Eq for IDLRange {}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 enum IDLState {
-    Empty,
-    Single(u64),
-    // Sparse(Vec<u64>)
-    Compressed(Vec<IDLRange>)
+    Sparse(SmallVec<[u64; DEFAULT_SPARSE_ALLOC]>),
+    Compressed(Vec<IDLRange>),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -59,7 +68,7 @@ impl IDLRange {
 impl Default for IDLBitRange {
     fn default() -> Self  {
         IDLBitRange {
-            state: IDLState::Empty
+            state: IDLState::Sparse(SmallVec::new())
         }
     }
 }
@@ -70,16 +79,12 @@ impl IDLBitRange {
     }
 
     pub fn is_empty(&self) -> bool {
-        match &self.state {
-            IDLState::Empty => true,
-            IDLState::Single(_) => false,
-            IDLState::Compressed(list) => self.len() == 0,
-        }
+        self.len() == 0
     }
 
-    pub(crate) fn is_single(&self) -> bool {
+    pub(crate) fn is_sparse(&self) -> bool {
         match self.state {
-            IDLState::Single(_) => true,
+            IDLState::Sparse(_) => true,
             _ => false,
         }
     }
@@ -93,19 +98,21 @@ impl IDLBitRange {
 
     pub fn len(&self) -> usize {
         match &self.state {
-        IDLState::Empty => 0,
-        IDLState::Single(value) => 1,
-        IDLState::Compressed(list) =>
-            list
-                .iter()
-                .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
+            IDLState::Sparse(list) => list.len(),
+            IDLState::Compressed(list) =>
+                list
+                    .iter()
+                    .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
         }
     }
 
     pub fn contains(&self, id: u64) -> bool {
         match &self.state {
-            IDLState::Empty => false,
-            IDLState::Single(value) => *value == id,
+            IDLState::Sparse(list) => {
+                list.as_slice()
+                    .binary_search(&id)
+                    .is_ok()
+            }
             IDLState::Compressed(list) => {
                 let bvalue: u64 = id % 64;
                 let range: u64 = id - bvalue;
@@ -124,26 +131,9 @@ impl IDLBitRange {
     }
 
     pub unsafe fn push_id(&mut self, id: u64) {
-        self.state = match &mut self.state {
-            IDLState::Empty =>
-                IDLState::Single(id),
-            IDLState::Single(prev) => {
-                let prev = *prev;
-                debug_assert!(id > prev);
-                // Given prev, append id.
-                let bvalue: u64 = prev % 64;
-                let range: u64 = prev - bvalue;
-                let mut candidate = IDLRange::new(range, 1 << bvalue);
-
-                let bvalue2: u64 = id % 64;
-                let range2: u64 = id - bvalue2;
-                if range == range2 {
-                    candidate.push_id(bvalue2);
-                    IDLState::Compressed(vec![candidate])
-                } else {
-                    let candidate2 = IDLRange::new(range2, 1 << bvalue2);
-                    IDLState::Compressed(vec![candidate, candidate2])
-                }
+        match &mut self.state {
+            IDLState::Sparse(list) => {
+                list.push(id);
             }
             IDLState::Compressed(list) => {
                 let bvalue: u64 = id % 64;
@@ -155,40 +145,21 @@ impl IDLBitRange {
                         // Insert the bit.
                         (*last).push_id(bvalue);
                         return;
-                    } else {
-                        list.push(IDLRange::new(range, 1 << bvalue));
-                        return;
                     }
-                } else {
-                    panic!("Inserted value would corrupt the set!");
                 }
+                // Range is greater, or the set is empty.
+                list.push(IDLRange::new(range, 1 << bvalue));
             }
         } // end match self.state.
     }
 
     pub fn insert_id(&mut self, id: u64) {
-        self.state = match &mut self.state {
-            IDLState::Empty =>
-                IDLState::Single(id),
-            IDLState::Single(prev) => {
-                let prev = *prev;
-                let bvalue: u64 = prev % 64;
-                let range: u64 = prev - bvalue;
-                let bvalue2: u64 = id % 64;
-                let range2: u64 = id - bvalue2;
-
-                let mut candidate = IDLRange::new(range, 1 << bvalue);
-
-                if range == range2 {
-                    candidate.push_id(bvalue2);
-                    IDLState::Compressed(vec![candidate])
-                } else {
-                    let candidate2 = IDLRange::new(range2, 1 << bvalue2);
-                    if range > range2 {
-                        IDLState::Compressed(vec![candidate2, candidate])
-                    } else {
-                        IDLState::Compressed(vec![candidate, candidate2])
-                    }
+        match &mut self.state {
+            IDLState::Sparse(list) => {
+                let r = list.binary_search(&id);
+                // In the ok case, it's already present.
+                if let Err(idx) = r {
+                    list.insert(idx, id);
                 }
             }
             IDLState::Compressed(list) => {
@@ -207,15 +178,18 @@ impl IDLBitRange {
                         list.insert(idx, candidate);
                     }
                 };
-                return;
             }
         }
     }
 
     pub fn remove_id(&mut self, id: u64) {
-        self.state = match &mut self.state {
-            IDLState::Empty => return,
-            IDLState::Single(prev) => IDLState::Empty,
+        match &mut self.state {
+            IDLState::Sparse(list) => {
+                let r = list.binary_search(&id);
+                if let Ok(idx) = r {
+                    list.remove(idx);
+                };
+            }
             IDLState::Compressed(list) => {
                 // Determine our range
                 let bvalue: u64 = id % 64;
@@ -244,47 +218,87 @@ impl IDLBitRange {
                         // No action required, the value is not in any range.
                     }
                 }
-                if list.len() == 0 {
-                    IDLState::Empty
-                } else {
-                    return;
-                }
             }
+        } // end match
+    }
+
+    pub fn compress(&mut self) {
+        if self.is_compressed() {
+            return;
+        }
+        let mut prev_state = IDLState::Compressed(Vec::new());
+        std::mem::swap(&mut prev_state, &mut self.state);
+        match prev_state {
+            IDLState::Sparse(list) => {
+                list.into_iter().for_each(|i|
+                    unsafe { self.push_id(i); })
+            }
+            IDLState::Compressed(_) => panic!("Unexpected state!"),
         }
     }
 
     #[inline(always)]
     fn bitand_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
-            (IDLState::Empty, _) |
-            (_, IDLState::Empty) => IDLBitRange::new(),
-            (IDLState::Single(v1), IDLState::Single(v2)) => {
-                if v1 == v2 {
-                    IDLBitRange {
-                        state: IDLState::Single(*v1)
+            (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
+                // If one is significantly smaller, can we do a binary search instead?
+                let mut nlist = SmallVec::new();
+
+                let mut liter = lhs.iter();
+                let mut riter = rhs.iter();
+
+                let mut lnext = liter.next();
+                let mut rnext = riter.next();
+
+                while lnext.is_some() && rnext.is_some() {
+                    let l = *lnext.unwrap();
+                    let r = *rnext.unwrap();
+
+                    if l == r {
+                        nlist.push(l);
+                        lnext = liter.next();
+                        rnext = riter.next();
+                    } else if l < r {
+                        lnext = liter.next();
+                    } else {
+                        rnext = riter.next();
                     }
-                } else {
-                    IDLBitRange::new()
+                }
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist)
                 }
             }
-            (IDLState::Single(id), IDLState::Compressed(list)) |
-            (IDLState::Compressed(list), IDLState::Single(id)) => {
-                let id = *id;
-                let bvalue: u64 = id % 64;
-                let range: u64 = id - bvalue;
-                let mask = 1 << bvalue;
+            (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
+            (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+                // What if compressed is larger?
+                // What if sparse is larger?
+                let mut nlist = SmallVec::new();
 
-                if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
-                    // We know this is safe and exists due to binary search.
-                    let existing = unsafe { list.get_unchecked(idx) };
-                    if (existing.mask & mask) > 0 {
-                        return IDLBitRange {
-                            state: IDLState::Single(id)
-                        };
+                let mut liter = sparselist.iter();
+                let mut riter = IDLBitRangeIter::new(&list);
+
+                let mut lnext = liter.next();
+                let mut rnext = riter.next();
+
+                while lnext.is_some() && rnext.is_some() {
+                    let l = *lnext.unwrap();
+                    let r = rnext.unwrap();
+
+                    if l == r {
+                        nlist.push(l);
+                        lnext = liter.next();
+                        rnext = riter.next();
+                    } else if l < r {
+                        lnext = liter.next();
+                    } else {
+                        rnext = riter.next();
                     }
                 }
-                // Catch all, not found.
-                IDLBitRange::new()
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist)
+                }
             }
             (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
                 let mut nlist = Vec::new();
@@ -315,9 +329,9 @@ impl IDLBitRange {
                 if nlist.len() == 0 {
                     IDLBitRange::new()
                 } else {
-                IDLBitRange {
-                    state: IDLState::Compressed(nlist)
-                }
+                    IDLBitRange {
+                        state: IDLState::Compressed(nlist)
+                    }
                 }
             }
         }
@@ -332,8 +346,9 @@ impl FromIterator<u64> for IDLBitRange {
         let iter = iter.into_iter();
         let (lower_bound, _) = iter.size_hint();
 
-        // We could check size hint, but it doesn't really work well for us here ...
-        let mut new = IDLBitRange::new();
+        let mut new = IDLBitRange {
+            state: IDLState::Sparse(SmallVec::with_capacity(lower_bound))
+        };
 
         let mut max_seen = 0;
         iter.for_each(|i| {
@@ -398,10 +413,61 @@ impl BitAnd for IDLBitRange {
     }
 }
 
+#[derive(Debug)]
+pub struct IDLBitRangeIter<'a> {
+    // rangeiter: std::vec::IntoIter<IDLRange>,
+    rangeiter: slice::Iter<'a, IDLRange>,
+    currange: Option<&'a IDLRange>,
+    curbit: u64,
+}
+
+impl<'a> Iterator for IDLBitRangeIter<'a> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        while self.currange.is_some() {
+            let range = self.currange.unwrap();
+            while self.curbit < 64 {
+                let m: u64 = 1 << self.curbit;
+                let candidate: u64 = range.mask & m;
+                if candidate > 0 {
+                    let result = Some(self.curbit + range.range);
+                    self.curbit += 1;
+                    return result;
+                }
+                self.curbit += 1;
+            }
+            self.currange = self.rangeiter.next();
+            self.curbit = 0;
+        }
+        None
+    }
+}
+
+impl<'a> IDLBitRangeIter<'a> {
+    fn new(data: &'a [IDLRange]) -> Self {
+        let mut rangeiter = data.into_iter();
+        let currange = rangeiter.next();
+        IDLBitRangeIter {
+            rangeiter,
+            currange,
+            curbit: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::IDLBitRange;
     use std::iter::FromIterator;
+
+    #[test]
+    fn test_struct_size() {
+        let ibrsize = std::mem::size_of::<IDLBitRange>();
+        eprintln!("Struct size {:?}", ibrsize);
+        assert!(ibrsize <= 64);
+        // assert!(ibrsize <= 128);
+    }
 
     #[test]
     fn test_empty() {
@@ -415,20 +481,19 @@ mod tests {
         let mut idl_a = IDLBitRange::new();
         unsafe { idl_a.push_id(0) };
         assert!(idl_a.contains(0));
-        assert!(idl_a.is_single());
         assert!(idl_a.len() == 1);
 
         unsafe { idl_a.push_id(1) };
         assert!(idl_a.contains(0));
         assert!(idl_a.contains(1));
-        assert!(idl_a.is_compressed());
+        assert!(idl_a.is_sparse());
         assert!(idl_a.len() == 2);
 
         unsafe { idl_a.push_id(2) };
         assert!(idl_a.contains(0));
         assert!(idl_a.contains(1));
         assert!(idl_a.contains(2));
-        assert!(idl_a.is_compressed());
+        assert!(idl_a.is_sparse());
         assert!(idl_a.len() == 3);
 
         unsafe { idl_a.push_id(128) };
@@ -436,7 +501,7 @@ mod tests {
         assert!(idl_a.contains(1));
         assert!(idl_a.contains(2));
         assert!(idl_a.contains(128));
-        assert!(idl_a.is_compressed());
+        assert!(idl_a.is_sparse());
         assert!(idl_a.len() == 4);
     }
 
@@ -455,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_id() {
+    fn test_sparse_remove_id() {
         let mut idl_a = IDLBitRange::new();
         idl_a.remove_id(100);
         assert!(idl_a.len() == 0);
@@ -485,6 +550,53 @@ mod tests {
 
         let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 64, 68]);
         let idl_expect = IDLBitRange::from_iter(vec![1, 2, 64]);
+        idl_a.remove_id(68);
+        assert_eq!(idl_a, idl_expect);
+    }
+
+    #[test]
+    fn test_compressed_remove_id() {
+        let mut idl_a = IDLBitRange::new();
+        idl_a.compress();
+        assert!(idl_a.is_compressed());
+        idl_a.remove_id(100);
+        assert!(idl_a.len() == 0);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![100]);
+        idl_a.compress();
+        idl_a.remove_id(100);
+        assert!(idl_a.len() == 0);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![100, 101]);
+        idl_a.compress();
+        idl_a.remove_id(101);
+        assert!(idl_a.len() == 1);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 64, 68]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![2, 64, 68]);
+        idl_a.compress();
+        idl_expect.compress();
+        idl_a.remove_id(1);
+        assert_eq!(idl_a, idl_expect);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 64, 68]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 64, 68]);
+        idl_a.compress();
+        idl_expect.compress();
+        idl_a.remove_id(2);
+        assert_eq!(idl_a, idl_expect);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 64, 68]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 68]);
+        idl_a.compress();
+        idl_expect.compress();
+        idl_a.remove_id(64);
+        assert_eq!(idl_a, idl_expect);
+
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 64, 68]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 64]);
+        idl_a.compress();
+        idl_expect.compress();
         idl_a.remove_id(68);
         assert_eq!(idl_a, idl_expect);
     }
@@ -606,6 +718,40 @@ mod tests {
         let idl_a = IDLBitRange::from_iter(vec![307199]);
         let idl_b = IDLBitRange::from_iter(102400..307200);
         let idl_expect = IDLBitRange::from_iter(vec![307199]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_compressed_intersection() {
+        let mut idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let mut idl_b = IDLBitRange::from_iter(1..1024);
+        let mut idl_expect = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_compressed_intersection() {
+        let mut idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let idl_b = IDLBitRange::from_iter(1..1024);
+        let idl_expect = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+
+        idl_a.compress();
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
