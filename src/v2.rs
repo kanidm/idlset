@@ -8,7 +8,7 @@ use std::slice;
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
 /// or very large indexes (think pres, class), we can keep this small.
-const DEFAULT_SPARSE_ALLOC: usize = 2;
+const DEFAULT_SPARSE_ALLOC: usize = 5;
 // const DEFAULT_COMP_ALLOC: usize = 2;
 // const DEFAULT_SPARSE_ALLOC: usize = 5 + 8;
 // const DEFAULT_COMP_ALLOC: usize = 2 + 4;
@@ -140,6 +140,12 @@ impl IDLBitRange {
     }
 
     pub unsafe fn push_id(&mut self, id: u64) {
+        if let IDLState::Sparse(list) = &self.state {
+            if list.len() >= DEFAULT_SPARSE_ALLOC {
+                self.compress()
+            }
+        };
+
         match &mut self.state {
             IDLState::Sparse(list) => {
                 list.push(id);
@@ -163,6 +169,12 @@ impl IDLBitRange {
     }
 
     pub fn insert_id(&mut self, id: u64) {
+        if let IDLState::Sparse(list) = &self.state {
+            if list.len() >= DEFAULT_SPARSE_ALLOC {
+                self.compress()
+            }
+        };
+
         match &mut self.state {
             IDLState::Sparse(list) => {
                 let r = list.binary_search(&id);
@@ -280,30 +292,20 @@ impl IDLBitRange {
             }
             (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
             (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
-                // What if compressed is larger?
-                // What if sparse is larger?
                 let mut nlist = SmallVec::new();
 
-                let mut liter = sparselist.iter();
-                let mut riter = IDLBitRangeIter::new(&list);
-
-                let mut lnext = liter.next();
-                let mut rnext = riter.next();
-
-                while lnext.is_some() && rnext.is_some() {
-                    let l = *lnext.unwrap();
-                    let r = rnext.unwrap();
-
-                    if l == r {
-                        nlist.push(l);
-                        lnext = liter.next();
-                        rnext = riter.next();
-                    } else if l < r {
-                        lnext = liter.next();
-                    } else {
-                        rnext = riter.next();
+                sparselist.iter().for_each(|id| {
+                    let bvalue: u64 = id % 64;
+                    let range: u64 = id - bvalue;
+                    let mask = 1 << bvalue;
+                    if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
+                        // We know this is safe and exists due to binary search.
+                        let existing = unsafe { list.get_unchecked(idx) };
+                        if (existing.mask & mask) > 0 {
+                            nlist.push(*id);
+                        }
                     }
-                }
+                });
 
                 IDLBitRange {
                     state: IDLState::Sparse(nlist)
@@ -394,45 +396,30 @@ impl IDLBitRange {
             }
             (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
             (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
-                let mut nlist = SmallVec::with_capacity(self.len() + rhs.len());
-                let mut liter = sparselist.iter();
-                let mut riter = IDLBitRangeIter::new(&list);
+                // Duplicate the compressed set.
+                let mut list = list.clone();
 
-                let mut lnext = liter.next();
-                let mut rnext = riter.next();
+                sparselist.iter().for_each(|id| {
+                    // Same algo as insert id.
+                    let bvalue: u64 = id % 64;
+                    let range: u64 = id - bvalue;
 
-                while lnext.is_some() && rnext.is_some() {
-                    let l = *lnext.unwrap();
-                    let r = rnext.unwrap();
+                    let candidate = IDLRange::new(range, 1 << bvalue);
 
-                    let n = if l == r {
-                        lnext = liter.next();
-                        rnext = riter.next();
-                        l
-                    } else if l < r {
-                        lnext = liter.next();
-                        l
-                    } else {
-                        rnext = riter.next();
-                        r
+                    let r = list.binary_search(&candidate);
+                    match r {
+                        Ok(idx) => {
+                            let mut existing = list.get_mut(idx).unwrap();
+                            existing.mask |= candidate.mask;
+                        }
+                        Err(idx) => {
+                            list.insert(idx, candidate);
+                        }
                     };
-                    nlist.push(n);
-                }
-
-                while lnext.is_some() {
-                    let l = lnext.unwrap();
-                    nlist.push(*l);
-                    lnext = liter.next();
-                }
-
-                while rnext.is_some() {
-                    let r = rnext.unwrap();
-                    nlist.push(r);
-                    rnext = riter.next();
-                }
+                });
 
                 IDLBitRange {
-                    state: IDLState::Sparse(nlist)
+                    state: IDLState::Compressed(list)
                 }
             }
             (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
