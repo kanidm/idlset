@@ -126,11 +126,12 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         |t, RDuplex(a, b)| t.iter(|| { b | a }.sum()),
     );
     group.bench_with_input(
-        BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
+        BenchmarkId::new("Compressed V2", &ri),
         &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
     );
 
+    /*
     v2i.0.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
@@ -144,6 +145,7 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
     );
+    */
     group.finish();
 
     let mut v2i = V2Duplex(
@@ -162,11 +164,12 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
     );
 
     group.bench_with_input(
-        BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
+        BenchmarkId::new("Compressed V2", &ri),
         &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
     );
 
+    /*
     v2i.0.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
@@ -180,6 +183,7 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
     );
+    */
 
     group.finish();
 }
