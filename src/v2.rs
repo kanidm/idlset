@@ -1,7 +1,7 @@
 
 use std::iter::FromIterator;
 use std::cmp::Ordering;
-use std::ops::BitAnd;
+use std::ops::{BitOr, BitAnd};
 use smallvec::SmallVec;
 use std::slice;
 
@@ -103,6 +103,15 @@ impl IDLBitRange {
                 list
                     .iter()
                     .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
+        }
+    }
+
+    pub fn sum(&self) -> u64 {
+        match &self.state {
+            IDLState::Sparse(list) => list.iter().fold(0, |acc, x| x + acc),
+            IDLState::Compressed(list) =>
+                IDLBitRangeIter::new(&list)
+                    .fold(0, |acc, x| x + acc),
         }
     }
 
@@ -336,6 +345,148 @@ impl IDLBitRange {
             }
         }
     }
+
+
+    #[inline(always)]
+    fn bitor_inner(&self, rhs: &Self) -> Self {
+        match (&self.state, &rhs.state) {
+            (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
+                let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
+                let mut liter = lhs.iter();
+                let mut riter = rhs.iter();
+
+                let mut lnext = liter.next();
+                let mut rnext = riter.next();
+
+                while lnext.is_some() && rnext.is_some() {
+                    let l = lnext.unwrap();
+                    let r = rnext.unwrap();
+
+                    let n = if l == r {
+                        lnext = liter.next();
+                        rnext = riter.next();
+                        l
+                    } else if l < r {
+                        lnext = liter.next();
+                        l
+                    } else {
+                        rnext = riter.next();
+                        r
+                    };
+                    nlist.push(*n);
+                }
+
+                while lnext.is_some() {
+                    let l = lnext.unwrap();
+                    nlist.push(*l);
+                    lnext = liter.next();
+                }
+
+                while rnext.is_some() {
+                    let r = rnext.unwrap();
+                    nlist.push(*r);
+                    rnext = riter.next();
+                }
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist)
+                }
+            }
+            (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
+            (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+                let mut nlist = SmallVec::with_capacity(self.len() + rhs.len());
+                let mut liter = sparselist.iter();
+                let mut riter = IDLBitRangeIter::new(&list);
+
+                let mut lnext = liter.next();
+                let mut rnext = riter.next();
+
+                while lnext.is_some() && rnext.is_some() {
+                    let l = *lnext.unwrap();
+                    let r = rnext.unwrap();
+
+                    let n = if l == r {
+                        lnext = liter.next();
+                        rnext = riter.next();
+                        l
+                    } else if l < r {
+                        lnext = liter.next();
+                        l
+                    } else {
+                        rnext = riter.next();
+                        r
+                    };
+                    nlist.push(n);
+                }
+
+                while lnext.is_some() {
+                    let l = lnext.unwrap();
+                    nlist.push(*l);
+                    lnext = liter.next();
+                }
+
+                while rnext.is_some() {
+                    let r = rnext.unwrap();
+                    nlist.push(r);
+                    rnext = riter.next();
+                }
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist)
+                }
+            }
+            (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
+                let llen = list1.len();
+                let rlen = list2.len();
+
+                let mut nlist = Vec::with_capacity(llen + rlen);
+
+                let mut liter = list1.iter();
+                let mut riter = list2.iter();
+
+                let mut lnextrange = liter.next();
+                let mut rnextrange = riter.next();
+
+                while lnextrange.is_some() && rnextrange.is_some() {
+                    let l = lnextrange.unwrap();
+                    let r = rnextrange.unwrap();
+
+                    let (range, mask) = if l.range == r.range {
+                        lnextrange = liter.next();
+                        rnextrange = riter.next();
+                        (l.range, l.mask | r.mask)
+                    } else if l.range < r.range {
+                        lnextrange = liter.next();
+                        (l.range, l.mask)
+                    } else {
+                        rnextrange = riter.next();
+                        (r.range, r.mask)
+                    };
+                    let newrange = IDLRange::new(range, mask);
+                    nlist.push(newrange);
+                }
+
+                while lnextrange.is_some() {
+                    let l = lnextrange.unwrap();
+
+                    let newrange = IDLRange::new(l.range, l.mask);
+                    nlist.push(newrange);
+                    lnextrange = liter.next();
+                }
+
+                while rnextrange.is_some() {
+                    let r = rnextrange.unwrap();
+
+                    let newrange = IDLRange::new(r.range, r.mask);
+                    nlist.push(newrange);
+                    rnextrange = riter.next();
+                }
+                IDLBitRange {
+                    state: IDLState::Compressed(nlist)
+                }
+            }
+        } // end match
+    }
 }
 
 impl FromIterator<u64> for IDLBitRange {
@@ -410,6 +561,52 @@ impl BitAnd for IDLBitRange {
     /// ```
     fn bitand(self, rhs: IDLBitRange) -> IDLBitRange {
         self.bitand_inner(&rhs)
+    }
+}
+
+impl BitOr for &IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an Or (union) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a | idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitor(self, rhs: &IDLBitRange) -> IDLBitRange {
+        self.bitor_inner(rhs)
+    }
+}
+
+impl BitOr for IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an Or (union) operation between two sets. This returns
+    /// a new set containing the results.
+    ///
+    /// # Examples
+    /// ```
+    /// # use idlset::IDLBitRange;
+    /// # use std::iter::FromIterator;
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a | idl_b;
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn bitor(self, rhs: Self) -> IDLBitRange {
+        self.bitor_inner(&rhs)
     }
 }
 
@@ -754,6 +951,68 @@ mod tests {
         idl_a.compress();
 
         let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_union_1() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_b = IDLBitRange::from_iter(vec![2]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
+
+        let idl_result = idl_a | idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_union_2() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+        let idl_b = IDLBitRange::from_iter(vec![4, 67]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 67]);
+
+        let idl_result = idl_a | idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_union_3() {
+        let idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let idl_b = IDLBitRange::from_iter(1..1024);
+        let idl_expect = IDLBitRange::from_iter(1..1024);
+
+        let idl_result = idl_a | idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_union_compressed() {
+        let mut idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let mut idl_b = IDLBitRange::from_iter(1..1024);
+        let mut idl_expect = IDLBitRange::from_iter(1..1024);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a | idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_union_compressed() {
+        let mut idl_a = IDLBitRange::from_iter(vec![
+            2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
+        ]);
+        let mut idl_b = IDLBitRange::from_iter(1..1024);
+        let mut idl_expect = IDLBitRange::from_iter(1..1024);
+
+        idl_a.compress();
+
+        let idl_result = idl_a | idl_b;
         assert_eq!(idl_result, idl_expect);
     }
 }

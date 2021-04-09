@@ -127,21 +127,21 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
     );
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
     );
 
     v2i.0.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
     );
 
     v2i.1.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Compressed Compressed", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
     );
     group.finish();
@@ -163,21 +163,21 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
 
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Sparse", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
     );
 
     v2i.0.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Sparse Compressed", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
     );
 
     v2i.1.compress();
     group.bench_with_input(
         BenchmarkId::new("Compressed V2 Compressed Compressed", &ri),
-        &ri,
+        &v2i,
         |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
     );
 
