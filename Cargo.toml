@@ -1,6 +1,6 @@
 [package]
 name = "idlset"
-version = "0.1.13"
+version = "0.2.0"
 authors = ["William Brown <william@blackhats.net.au>"]
 edition = "2018"
 

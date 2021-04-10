@@ -1,3 +1,12 @@
+//! Version 2 of IDLSet - This is a self-adaptive version of the compressed integer
+//! set library, that compresses dynamicly based on heuristics of your data. In the
+//! case that your data is sparse, or a very small set, the data will remain uncompressed.
+//! If your data is dense, then it will be compressed. Depending on the nature of
+//! the operations you use, this means that when intersecting or unioning these
+//! an optimised version for these behaviours can be chosen, significantly improving
+//! performance in general cases over [`v1`] (which is always compressed).
+
+use crate::AndNot;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::iter::FromIterator;
@@ -46,6 +55,27 @@ enum IDLState {
     Compressed(Vec<IDLRange>),
 }
 
+/// An ID List of `u64` values, that uses a compressed representation of `u64` to
+/// speed up set operations, improve cpu cache behaviour and consume less memory.
+///
+/// This is essentially a `Vec<u64>`, but requires less storage with large values
+/// and natively supports logical operations for set manipulation. Today this
+/// supports And, Or, AndNot. Future types may be added such as xor.
+///
+/// # Examples
+/// ```
+/// use idlset::v2::IDLBitRange;
+/// use std::iter::FromIterator;
+///
+/// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+/// let idl_b = IDLBitRange::from_iter(vec![2]);
+///
+/// // Conduct an and (intersection) of the two lists to find commont members.
+/// let idl_result = idl_a & idl_b;
+///
+/// let idl_expect = IDLBitRange::from_iter(vec![2]);
+/// assert_eq!(idl_result, idl_expect);
+/// ```
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct IDLBitRange {
     state: IDLState,
@@ -53,10 +83,7 @@ pub struct IDLBitRange {
 
 impl IDLRange {
     fn new(range: u64, mask: u64) -> Self {
-        IDLRange {
-            range: range,
-            mask: mask,
-        }
+        IDLRange { range, mask }
     }
 
     #[inline(always)]
@@ -66,6 +93,7 @@ impl IDLRange {
 }
 
 impl Default for IDLBitRange {
+    /// Construct a new, empty set.
     fn default() -> Self {
         IDLBitRange {
             state: IDLState::Sparse(SmallVec::new()),
@@ -74,34 +102,40 @@ impl Default for IDLBitRange {
 }
 
 impl IDLBitRange {
+    /// Construct a new, empty set.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Construct a set containing a single initial value. This is a special
+    /// use case for database indexing where single value equality indexes are
+    /// store uncompressed on disk.
     pub fn from_u64(id: u64) -> Self {
         IDLBitRange {
             state: IDLState::Sparse(smallvec![id]),
         }
     }
 
+    /// Show if this IDL set contains no elements
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub(crate) fn is_sparse(&self) -> bool {
-        match self.state {
-            IDLState::Sparse(_) => true,
-            _ => false,
-        }
+    /// Show if this data set is sparsely packed.
+    pub fn is_sparse(&self) -> bool {
+        matches!(self.state, IDLState::Sparse(_))
     }
 
+    /// Show if this data set is compressed.
     pub fn is_compressed(&self) -> bool {
-        match self.state {
-            IDLState::Compressed(_) => true,
-            _ => false,
-        }
+        matches!(self.state, IDLState::Compressed(_))
     }
 
+    /// Returns the number of ids in the set. This operation iterates over
+    /// the set, decompressing it to count the ids, which MAY be slow. If
+    /// you want to see if the set is empty, us `is_empty()`
+    #[inline(always)]
     pub fn len(&self) -> usize {
         match &self.state {
             IDLState::Sparse(list) => list.len(),
@@ -111,13 +145,16 @@ impl IDLBitRange {
         }
     }
 
+    /// Sum all the values contained into this set to yield a single result.
+    #[inline(always)]
     pub fn sum(&self) -> u64 {
         match &self.state {
             IDLState::Sparse(list) => list.iter().fold(0, |acc, x| x + acc),
-            IDLState::Compressed(list) => IDLBitRangeIter::new(&list).fold(0, |acc, x| x + acc),
+            IDLState::Compressed(list) => IDLBitRangeIterComp::new(&list).fold(0, |acc, x| x + acc),
         }
     }
 
+    /// Returns `true` if the id `u64` value exists within the set.
     pub fn contains(&self, id: u64) -> bool {
         match &self.state {
             IDLState::Sparse(list) => list.as_slice().binary_search(&id).is_ok(),
@@ -129,7 +166,7 @@ impl IDLBitRange {
                 if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
                     // We know this is safe and exists due to binary search.
                     let existing = unsafe { list.get_unchecked(idx) };
-                    return (existing.mask & mask) > 0;
+                    (existing.mask & mask) > 0
                 } else {
                     false
                 }
@@ -137,6 +174,13 @@ impl IDLBitRange {
         }
     }
 
+    /// Push an id into the set. The value is appended onto the tail of the set.
+    /// You probably want `insert_id` instead.
+    ///
+    /// # Safety
+    ///
+    /// Failure to insert sorted data will corrupt the set, and cause subsequent
+    /// set operations to yield incorrect and inconsistent results.
     pub unsafe fn push_id(&mut self, id: u64) {
         match &mut self.state {
             IDLState::Sparse(list) => {
@@ -160,6 +204,7 @@ impl IDLBitRange {
         } // end match self.state.
     }
 
+    /// Insert an id into the set, correctly sorted.
     pub fn insert_id(&mut self, id: u64) {
         match &mut self.state {
             IDLState::Sparse(list) => {
@@ -189,6 +234,9 @@ impl IDLBitRange {
         }
     }
 
+    /// Remove an id from the set, leaving it correctly sorted.
+    ///
+    /// If the value is not present, no action is taken.
     pub fn remove_id(&mut self, id: u64) {
         match &mut self.state {
             IDLState::Sparse(list) => {
@@ -205,30 +253,28 @@ impl IDLBitRange {
                 // We make a dummy range and mask to find our range
                 let candidate = IDLRange::new(range, 1 << bvalue);
 
-                match list.binary_search(&candidate) {
-                    Ok(idx) => {
-                        // The listed range would contain our bit.
-                        // So we need to remove this, leaving all other bits in place.
-                        //
-                        // To do this, we not the candidate, so all other bits remain,
-                        // then we perform and &= so that the existing bits survive.
-                        let mut existing = list.get_mut(idx).unwrap();
+                if let Ok(idx) = list.binary_search(&candidate) {
+                    // The listed range would contain our bit.
+                    // So we need to remove this, leaving all other bits in place.
+                    //
+                    // To do this, we not the candidate, so all other bits remain,
+                    // then we perform and &= so that the existing bits survive.
+                    let mut existing = list.get_mut(idx).unwrap();
 
-                        existing.mask &= !candidate.mask;
+                    existing.mask &= !candidate.mask;
 
-                        if existing.mask == 0 {
-                            // No more items in this range, remove it.
-                            list.remove(idx);
-                        }
-                    }
-                    Err(_) => {
-                        // No action required, the value is not in any range.
+                    if existing.mask == 0 {
+                        // No more items in this range, remove it.
+                        list.remove(idx);
                     }
                 }
             }
         } // end match
     }
 
+    /// Compress this IDL set. This may be needed if you wish to force a set
+    /// to be compressed, even if the adaptive behaviour has not compressed
+    /// it for you.
     pub fn compress(&mut self) {
         if self.is_compressed() {
             return;
@@ -266,17 +312,21 @@ impl IDLBitRange {
                 let mut rnext = riter.next();
 
                 while lnext.is_some() && rnext.is_some() {
-                    let l = *lnext.unwrap();
-                    let r = *rnext.unwrap();
+                    let l = lnext.unwrap();
+                    let r = rnext.unwrap();
 
-                    if l == r {
-                        nlist.push(l);
-                        lnext = liter.next();
-                        rnext = riter.next();
-                    } else if l < r {
-                        lnext = liter.next();
-                    } else {
-                        rnext = riter.next();
+                    match l.cmp(r) {
+                        Ordering::Equal => {
+                            nlist.push(*l);
+                            lnext = liter.next();
+                            rnext = riter.next();
+                        }
+                        Ordering::Less => {
+                            lnext = liter.next();
+                        }
+                        Ordering::Greater => {
+                            rnext = riter.next();
+                        }
                     }
                 }
 
@@ -317,21 +367,25 @@ impl IDLBitRange {
                     let l = lnextrange.unwrap();
                     let r = rnextrange.unwrap();
 
-                    if l.range == r.range {
-                        let mask = l.mask & r.mask;
-                        if mask > 0 {
-                            let newrange = IDLRange::new(l.range, mask);
-                            nlist.push(newrange);
+                    match l.range.cmp(&r.range) {
+                        Ordering::Equal => {
+                            let mask = l.mask & r.mask;
+                            if mask > 0 {
+                                let newrange = IDLRange::new(l.range, mask);
+                                nlist.push(newrange);
+                            }
+                            lnextrange = liter.next();
+                            rnextrange = riter.next();
                         }
-                        lnextrange = liter.next();
-                        rnextrange = riter.next();
-                    } else if l.range < r.range {
-                        lnextrange = liter.next();
-                    } else {
-                        rnextrange = riter.next();
+                        Ordering::Less => {
+                            lnextrange = liter.next();
+                        }
+                        Ordering::Greater => {
+                            rnextrange = riter.next();
+                        }
                     }
                 }
-                if nlist.len() == 0 {
+                if nlist.is_empty() {
                     IDLBitRange::new()
                 } else {
                     IDLBitRange {
@@ -357,16 +411,20 @@ impl IDLBitRange {
                     let l = lnext.unwrap();
                     let r = rnext.unwrap();
 
-                    let n = if l == r {
-                        lnext = liter.next();
-                        rnext = riter.next();
-                        l
-                    } else if l < r {
-                        lnext = liter.next();
-                        l
-                    } else {
-                        rnext = riter.next();
-                        r
+                    let n = match l.cmp(&r) {
+                        Ordering::Equal => {
+                            lnext = liter.next();
+                            rnext = riter.next();
+                            l
+                        }
+                        Ordering::Less => {
+                            lnext = liter.next();
+                            l
+                        }
+                        Ordering::Greater => {
+                            rnext = riter.next();
+                            r
+                        }
                     };
                     nlist.push(*n);
                 }
@@ -431,16 +489,20 @@ impl IDLBitRange {
                     let l = lnextrange.unwrap();
                     let r = rnextrange.unwrap();
 
-                    let (range, mask) = if l.range == r.range {
-                        lnextrange = liter.next();
-                        rnextrange = riter.next();
-                        (l.range, l.mask | r.mask)
-                    } else if l.range < r.range {
-                        lnextrange = liter.next();
-                        (l.range, l.mask)
-                    } else {
-                        rnextrange = riter.next();
-                        (r.range, r.mask)
+                    let (range, mask) = match l.range.cmp(&r.range) {
+                        Ordering::Equal => {
+                            lnextrange = liter.next();
+                            rnextrange = riter.next();
+                            (l.range, l.mask | r.mask)
+                        }
+                        Ordering::Less => {
+                            lnextrange = liter.next();
+                            (l.range, l.mask)
+                        }
+                        Ordering::Greater => {
+                            rnextrange = riter.next();
+                            (r.range, r.mask)
+                        }
                     };
                     let newrange = IDLRange::new(range, mask);
                     nlist.push(newrange);
@@ -467,12 +529,152 @@ impl IDLBitRange {
             }
         } // end match
     }
+
+    #[inline(always)]
+    fn bitandnot_inner(&self, rhs: &Self) -> Self {
+        match (&self.state, &rhs.state) {
+            (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
+                let mut nlist = SmallVec::new();
+
+                let mut liter = lhs.iter();
+                let mut riter = rhs.iter();
+
+                let mut lnext = liter.next();
+                let mut rnext = riter.next();
+
+                while lnext.is_some() && rnext.is_some() {
+                    let l = lnext.unwrap();
+                    let r = rnext.unwrap();
+
+                    match l.cmp(r) {
+                        Ordering::Equal => {
+                            // It's in right, so exclude.
+                            lnext = liter.next();
+                            rnext = riter.next();
+                        }
+                        Ordering::Less => {
+                            nlist.push(*l);
+                            lnext = liter.next();
+                        }
+                        Ordering::Greater => {
+                            rnext = riter.next();
+                        }
+                    }
+                }
+
+                // Drain remaining left elements.
+                while lnext.is_some() {
+                    nlist.push(*lnext.unwrap());
+                    lnext = liter.next();
+                }
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist),
+                }
+            }
+            (IDLState::Sparse(sparselist), IDLState::Compressed(list)) => {
+                let mut nlist = SmallVec::new();
+
+                sparselist.iter().for_each(|id| {
+                    let bvalue: u64 = id % 64;
+                    let range: u64 = id - bvalue;
+                    let mask = 1 << bvalue;
+                    if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
+                        // Okay the range is there ...
+                        let existing = unsafe { list.get_unchecked(idx) };
+                        if (existing.mask & mask) == 0 {
+                            // It didn't match the mask, so it's not in right.
+                            nlist.push(*id);
+                        }
+                    } else {
+                        // Didn't find the range, push.
+                        nlist.push(*id);
+                    }
+                });
+
+                IDLBitRange {
+                    state: IDLState::Sparse(nlist),
+                }
+            }
+            (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+                let mut nlist = list.clone();
+                // This assumes the sparse is much much smaller and fragmented.
+                // Alternately, we could compress right, and use the lower algo.
+                sparselist.iter().for_each(|id| {
+                    // same algo as remove.
+                    let bvalue: u64 = id % 64;
+                    let range: u64 = id - bvalue;
+                    let candidate = IDLRange::new(range, 1 << bvalue);
+                    if let Ok(idx) = list.binary_search(&candidate) {
+                        let mut existing = nlist.get_mut(idx).unwrap();
+                        existing.mask &= !candidate.mask;
+                        if existing.mask == 0 {
+                            nlist.remove(idx);
+                        }
+                    }
+                });
+                IDLBitRange {
+                    state: IDLState::Compressed(nlist),
+                }
+            }
+            (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
+                // Worst case - we exclude nothing from list1.
+                let mut nlist = Vec::with_capacity(list1.len());
+
+                let mut liter = list1.iter();
+                let mut riter = list2.iter();
+
+                let mut lnextrange = liter.next();
+                let mut rnextrange = riter.next();
+
+                while lnextrange.is_some() && rnextrange.is_some() {
+                    let l = lnextrange.unwrap();
+                    let r = rnextrange.unwrap();
+
+                    match l.range.cmp(&r.range) {
+                        Ordering::Equal => {
+                            let mask = l.mask & (!r.mask);
+                            if mask > 0 {
+                                let newrange = IDLRange::new(l.range, mask);
+                                nlist.push(newrange);
+                            }
+                            lnextrange = liter.next();
+                            rnextrange = riter.next();
+                        }
+                        Ordering::Less => {
+                            // if the left range isn't in the right, just push it to the set and move
+                            // on.
+                            nlist.push(l.clone());
+                            lnextrange = liter.next();
+                        }
+                        Ordering::Greater => {
+                            rnextrange = riter.next();
+                        }
+                    }
+                }
+
+                // Drain the remaining left ranges into the set.
+                while lnextrange.is_some() {
+                    let l = lnextrange.unwrap();
+
+                    let newrange = IDLRange::new(l.range, l.mask);
+                    nlist.push(newrange);
+                    lnextrange = liter.next();
+                }
+
+                IDLBitRange {
+                    state: IDLState::Compressed(nlist),
+                }
+            }
+        } // end match
+    }
 }
 
 impl FromIterator<u64> for IDLBitRange {
     /// Build an IDLBitRange from at iterator. If you provide a sorted input, a fast append
     /// mode is used. Unsorted inputs use a slower insertion sort method
-    /// instead.
+    /// instead. Based on the provided input, this will adaptively choose sparse or compressed
+    /// storage of the dataset.
     fn from_iter<I: IntoIterator<Item = u64>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower_bound, _) = iter.size_hint();
@@ -516,7 +718,7 @@ impl BitAnd for &IDLBitRange {
     ///
     /// # Examples
     /// ```
-    /// # use idlset::IDLBitRange;
+    /// # use idlset::v2::IDLBitRange;
     /// # use std::iter::FromIterator;
     /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
     /// let idl_b = IDLBitRange::from_iter(vec![2]);
@@ -539,7 +741,7 @@ impl BitAnd for IDLBitRange {
     ///
     /// # Examples
     /// ```
-    /// # use idlset::IDLBitRange;
+    /// # use idlset::v2::IDLBitRange;
     /// # use std::iter::FromIterator;
     /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
     /// let idl_b = IDLBitRange::from_iter(vec![2]);
@@ -562,7 +764,7 @@ impl BitOr for &IDLBitRange {
     ///
     /// # Examples
     /// ```
-    /// # use idlset::IDLBitRange;
+    /// # use idlset::v2::IDLBitRange;
     /// # use std::iter::FromIterator;
     /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
     /// let idl_b = IDLBitRange::from_iter(vec![2]);
@@ -585,7 +787,7 @@ impl BitOr for IDLBitRange {
     ///
     /// # Examples
     /// ```
-    /// # use idlset::IDLBitRange;
+    /// # use idlset::v2::IDLBitRange;
     /// # use std::iter::FromIterator;
     /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
     /// let idl_b = IDLBitRange::from_iter(vec![2]);
@@ -600,15 +802,98 @@ impl BitOr for IDLBitRange {
     }
 }
 
+impl AndNot for IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an AndNot (exclude) operation between two sets. This returns
+    /// a new set containing the results. The set on the right is the candidate
+    /// set to exclude from the set of the left.
+    ///
+    /// # Examples
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{v2::IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a.andnot(idl_b);
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    ///
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{v2::IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// // Note how reversing a and b here will return an empty set.
+    /// let idl_result = idl_b.andnot(idl_a);
+    ///
+    /// let idl_expect = IDLBitRange::new();
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn andnot(self, rhs: Self) -> IDLBitRange {
+        self.bitandnot_inner(&rhs)
+    }
+}
+
+impl AndNot for &IDLBitRange {
+    type Output = IDLBitRange;
+
+    /// Perform an AndNot (exclude) operation between two sets. This returns
+    /// a new set containing the results. The set on the right is the candidate
+    /// set to exclude from the set of the left.
+    ///
+    /// # Examples
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{v2::IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// let idl_result = idl_a.andnot(idl_b);
+    ///
+    /// let idl_expect = IDLBitRange::from_iter(vec![1, 3]);
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    ///
+    /// ```
+    /// // Note the change to import the AndNot trait.
+    /// use idlset::{v2::IDLBitRange, AndNot};
+    /// # use std::iter::FromIterator;
+    ///
+    /// let idl_a = IDLBitRange::from_iter(vec![1, 2, 3]);
+    /// let idl_b = IDLBitRange::from_iter(vec![2]);
+    ///
+    /// // Note how reversing a and b here will return an empty set.
+    /// let idl_result = idl_b.andnot(idl_a);
+    ///
+    /// let idl_expect = IDLBitRange::new();
+    /// assert_eq!(idl_result, idl_expect);
+    /// ```
+    fn andnot(self, rhs: &IDLBitRange) -> IDLBitRange {
+        self.bitandnot_inner(rhs)
+    }
+}
+
+/// An internal component for compressed idl set iteration.
 #[derive(Debug)]
-pub struct IDLBitRangeIter<'a> {
+pub struct IDLBitRangeIterComp<'a> {
     // rangeiter: std::vec::IntoIter<IDLRange>,
     rangeiter: slice::Iter<'a, IDLRange>,
     currange: Option<&'a IDLRange>,
     curbit: u64,
 }
 
-impl<'a> Iterator for IDLBitRangeIter<'a> {
+impl<'a> Iterator for IDLBitRangeIterComp<'a> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
@@ -631,11 +916,11 @@ impl<'a> Iterator for IDLBitRangeIter<'a> {
     }
 }
 
-impl<'a> IDLBitRangeIter<'a> {
+impl<'a> IDLBitRangeIterComp<'a> {
     fn new(data: &'a [IDLRange]) -> Self {
-        let mut rangeiter = data.into_iter();
+        let mut rangeiter = data.iter();
         let currange = rangeiter.next();
-        IDLBitRangeIter {
+        IDLBitRangeIterComp {
             rangeiter,
             currange,
             curbit: 0,
@@ -643,9 +928,50 @@ impl<'a> IDLBitRangeIter<'a> {
     }
 }
 
+/// An iterator over the content of an IDLBitRange.
+#[derive(Debug)]
+pub enum IDLBitRangeIter<'a> {
+    /// The sparse
+    Sparse(slice::Iter<'a, u64>),
+    /// The compressed
+    Compressed(IDLBitRangeIterComp<'a>),
+}
+
+impl<'a> Iterator for IDLBitRangeIter<'a> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        match self {
+            IDLBitRangeIter::Sparse(i) => i.next().copied(),
+            IDLBitRangeIter::Compressed(i) => i.next(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a IDLBitRange {
+    type Item = u64;
+    type IntoIter = IDLBitRangeIter<'a>;
+
+    fn into_iter(self) -> IDLBitRangeIter<'a> {
+        match &self.state {
+            IDLState::Sparse(list) => IDLBitRangeIter::Sparse((&list).into_iter()),
+            IDLState::Compressed(list) => {
+                let mut liter = (&list).iter();
+                let nrange = liter.next();
+                IDLBitRangeIter::Compressed(IDLBitRangeIterComp {
+                    rangeiter: liter,
+                    currange: nrange,
+                    curbit: 0,
+                })
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::IDLBitRange;
+    use crate::AndNot;
     use std::iter::FromIterator;
 
     #[test]
@@ -658,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        let mut idl_a = IDLBitRange::new();
+        let idl_a = IDLBitRange::new();
         assert!(idl_a.is_empty());
         assert!(idl_a.len() == 0);
     }
@@ -998,12 +1324,208 @@ mod tests {
         let mut idl_a = IDLBitRange::from_iter(vec![
             2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
         ]);
-        let mut idl_b = IDLBitRange::from_iter(1..1024);
-        let mut idl_expect = IDLBitRange::from_iter(1..1024);
+        let idl_b = IDLBitRange::from_iter(1..1024);
+        let idl_expect = IDLBitRange::from_iter(1..1024);
 
         idl_a.compress();
 
         let idl_result = idl_a | idl_b;
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_not_1() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![3, 4]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_not_2() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![10]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_not_3() {
+        let idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![1]);
+        let idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_not_4() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let idl_b = IDLBitRange::from_iter(vec![65]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 64, 66]);
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_not_1() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![3, 4]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_not_2() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![10]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_not_3() {
+        let mut idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![1]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_not_4() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let mut idl_b = IDLBitRange::from_iter(vec![65]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 64, 66]);
+
+        idl_a.compress();
+        idl_b.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_comp_not_1() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![3, 4]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+
+        idl_b.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_comp_not_2() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![10]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+
+        idl_b.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_comp_not_3() {
+        let idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+        let mut idl_b = IDLBitRange::from_iter(vec![1]);
+        let idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+
+        idl_b.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_sparse_comp_not_4() {
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let mut idl_b = IDLBitRange::from_iter(vec![65]);
+        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 64, 66]);
+
+        idl_b.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_sparse_not_1() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![3, 4]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+
+        idl_a.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_sparse_not_2() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![10]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
+
+        idl_a.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_sparse_not_3() {
+        let mut idl_a = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+        let idl_b = IDLBitRange::from_iter(vec![1]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![2, 3, 4, 5, 6]);
+
+        idl_a.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_range_comp_sparse_not_4() {
+        let mut idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let idl_b = IDLBitRange::from_iter(vec![65]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 3, 64, 66]);
+
+        idl_a.compress();
+        idl_expect.compress();
+
+        let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
     }
 }

@@ -6,8 +6,8 @@ mod idl_simple;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use idl_simple::IDLSimple;
+use idlset::v1::IDLBitRange;
 use idlset::v2::IDLBitRange as IDLBitRangeV2;
-use idlset::IDLBitRange;
 use std::iter::FromIterator;
 
 // Trying to make these work with trait bounds is literally too hard
