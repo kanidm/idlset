@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::iter::FromIterator;
 use std::ops::{BitAnd, BitOr};
-use std::slice;
+use std::{fmt, slice};
 
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
@@ -85,6 +85,40 @@ impl IDLState {
     }
 }
 
+impl fmt::Display for IDLBitRange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.state {
+            IDLState::Sparse(list) => write!(
+                f,
+                "IDLBitRange (sparse values) {:?} (data) <optimised out>",
+                list.len()
+            ),
+            IDLState::Compressed(list) => write!(
+                f,
+                "IDLBitRange (compressed ranges) {:?} (decompressed) <optimised out>",
+                list.len()
+            ),
+        }
+    }
+}
+
+impl fmt::Debug for IDLBitRange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.state {
+            IDLState::Sparse(list) => {
+                write!(f, "IDLBitRange (sparse values) {:?} (data) [ ", list.len());
+            }
+            IDLState::Compressed(list) => {
+                write!(f, "IDLBitRange (compressed) {:?} (decompressed) [ ", list)?;
+            }
+        }
+        for id in self {
+            write!(f, "{}, ", id)?;
+        }
+        write!(f, "]")
+    }
+}
+
 /// An ID List of `u64` values, that uses a compressed representation of `u64` to
 /// speed up set operations, improve cpu cache behaviour and consume less memory.
 ///
@@ -106,7 +140,7 @@ impl IDLState {
 /// let idl_expect = IDLBitRange::from_iter(vec![2]);
 /// assert_eq!(idl_result, idl_expect);
 /// ```
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct IDLBitRange {
     state: IDLState,
 }
@@ -172,6 +206,36 @@ impl IDLBitRange {
             IDLState::Compressed(list) => list
                 .iter()
                 .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
+        }
+    }
+
+    fn len_ranges(&self) -> usize {
+        match &self.state {
+            IDLState::Sparse(_list) => 0,
+            IDLState::Compressed(list) => list.len(),
+        }
+    }
+
+    /// Returns if the number of ids in this set exceed this threshold. While
+    /// this must iterate to determine if this is true, since we shortcut return
+    /// in the check, on long sets we will not iterate over the complete content
+    /// making it faster than `len() < thresh`.
+    ///
+    /// Returns true if the set is smaller than threshold.
+    #[inline(always)]
+    pub fn below_threshold(&self, threshold: usize) -> bool {
+        match &self.state {
+            IDLState::Sparse(list) => list.len() < threshold,
+            IDLState::Compressed(list) => {
+                let mut ic: usize = 0;
+                for i in list.iter() {
+                    ic += i.mask.count_ones() as usize;
+                    if ic >= threshold {
+                        return false;
+                    }
+                }
+                true
+            }
         }
     }
 
@@ -319,12 +383,36 @@ impl IDLBitRange {
         }
     }
 
-    fn should_compress(&self) -> bool {
-        if let IDLState::Compressed(list) = &self.state {
-            // num values / num ranges == avg range bits.
-            (self.len() / list.len()) >= AVG_RANGE_COMP_REQ
+    /// If it is viable, attempt to compress this IDL. This operation will scan the
+    /// full IDL, so it's not recommended to call this frequently. Generally the use of
+    /// `from_iter` will already make the correct decision for you.
+    pub fn maybe_compress(&mut self) -> bool {
+        let maybe_state = if let IDLState::Sparse(list) = &self.state {
+            if list.len() < AVG_RANGE_COMP_REQ {
+                None
+            } else {
+                let mut maybe = IDLBitRange {
+                    state: IDLState::Compressed(Vec::new()),
+                };
+                list.iter().for_each(|id| unsafe { maybe.push_id(*id) });
+
+                if maybe.len_ranges() > 0
+                    && (maybe.len() / maybe.len_ranges()) >= AVG_RANGE_COMP_REQ
+                {
+                    let IDLBitRange { state } = maybe;
+                    Some(state)
+                } else {
+                    None
+                }
+            }
         } else {
-            unreachable!();
+            None
+        };
+        if let Some(mut new_state) = maybe_state {
+            std::mem::swap(&mut self.state, &mut new_state);
+            true
+        } else {
+            false
         }
     }
 
@@ -333,12 +421,11 @@ impl IDLBitRange {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // Fast path if there is a large difference in the sizes.
-                let state = if
-                    (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE) ||
-                    (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO) {
+                let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
+                    || (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
+                {
                     IDLState::sparse_bitand_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else
-                    if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
+                } else if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
                     let mut nlist = SmallVec::new();
@@ -442,12 +529,11 @@ impl IDLBitRange {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // If one is much smaller, we can clone the larger and just insert.
-                let state = if
-                    (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE) ||
-                    (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO) {
+                let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
+                    || (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
+                {
                     IDLState::sparse_bitor_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else
-                    if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
+                } else if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitor_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
                     let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
@@ -745,9 +831,6 @@ impl FromIterator<u64> for IDLBitRange {
         let mut new_sparse = IDLBitRange {
             state: IDLState::Sparse(SmallVec::with_capacity(lower_bound)),
         };
-        let mut new_comp = IDLBitRange {
-            state: IDLState::Compressed(Vec::with_capacity((lower_bound / AVG_RANGE_COMP_REQ) + 1)),
-        };
 
         let mut max_seen = 0;
         iter.for_each(|i| {
@@ -755,21 +838,16 @@ impl FromIterator<u64> for IDLBitRange {
                 // if we have a sorted list, we can take a fast append path.
                 unsafe {
                     new_sparse.push_id(i);
-                    new_comp.push_id(i);
                 }
                 max_seen = i;
             } else {
                 // if not, we have to bst each time to get the right place.
                 new_sparse.insert_id(i);
-                new_comp.insert_id(i);
             }
         });
 
-        if new_comp.should_compress() {
-            new_comp
-        } else {
-            new_sparse
-        }
+        new_sparse.maybe_compress();
+        new_sparse
     }
 }
 
