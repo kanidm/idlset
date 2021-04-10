@@ -77,8 +77,8 @@ impl IDLState {
         nlist.extend_from_slice(lrg);
 
         smol.iter().for_each(|id| {
-            if let Err(idx) = lrg.binary_search(id) {
-                nlist.insert(idx, *id)
+            if let Err(idx) = nlist.binary_search(id) {
+                nlist.insert(idx, *id);
             }
         });
         IDLState::Sparse(nlist)
@@ -341,7 +341,6 @@ impl IDLBitRange {
                     if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
-                    // In the future, we can use partition_dedup with a merge + sort, then pull out the dups.
                     let mut nlist = SmallVec::new();
 
                     let mut liter = lhs.iter();
@@ -442,7 +441,6 @@ impl IDLBitRange {
     fn bitor_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
-                /*
                 // If one is much smaller, we can clone the larger and just insert.
                 let state = if
                     (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE) ||
@@ -495,8 +493,9 @@ impl IDLBitRange {
 
                     IDLState::Sparse(nlist)
                 };
-                */
 
+                /*
+                // Failed experiment XD
                 let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
                 nlist.extend_from_slice(lhs.as_slice());
                 nlist.extend_from_slice(rhs.as_slice());
@@ -505,6 +504,7 @@ impl IDLBitRange {
                 nlist.shrink_to_fit();
 
                 let state = IDLState::Sparse(nlist);
+                */
 
                 IDLBitRange { state }
             }
