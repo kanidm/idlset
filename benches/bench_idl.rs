@@ -6,8 +6,8 @@ mod idl_simple;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use idl_simple::IDLSimple;
-use idlset::IDLBitRange;
 use idlset::v2::IDLBitRange as IDLBitRangeV2;
+use idlset::IDLBitRange;
 use std::iter::FromIterator;
 
 // Trying to make these work with trait bounds is literally too hard
@@ -35,10 +35,16 @@ struct V2Duplex(IDLBitRangeV2, IDLBitRangeV2);
 
 impl std::fmt::Display for V2Duplex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} - {} {}", self.0.len(), self.0.is_compressed(), self.1.len(), self.1.is_compressed())
+        write!(
+            f,
+            "{} {} - {} {}",
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed()
+        )
     }
 }
-
 
 struct Triplex(Vec<u64>, Vec<u64>, Vec<u64>);
 
@@ -77,9 +83,12 @@ impl std::fmt::Display for V2Triplex {
         write!(
             f,
             "{} {} -- {} {} -- {} {}",
-            self.0.len(), self.0.is_compressed(),
-            self.1.len(), self.1.is_compressed(),
-            self.2.len(), self.2.is_compressed(),
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed(),
+            self.2.len(),
+            self.2.is_compressed(),
         )
     }
 }
@@ -119,8 +128,10 @@ impl std::fmt::Display for V2Complex {
         write!(
             f,
             "{} {} -- {} {} -- [{}]",
-            self.0.len(), self.0.is_compressed(),
-            self.1.len(), self.1.is_compressed(),
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed(),
             self.2.len()
         )
     }

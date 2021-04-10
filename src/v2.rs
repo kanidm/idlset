@@ -1,21 +1,17 @@
-
-use std::iter::FromIterator;
-use std::cmp::Ordering;
-use std::ops::{BitOr, BitAnd};
 use smallvec::SmallVec;
+use std::cmp::Ordering;
+use std::iter::FromIterator;
+use std::ops::{BitAnd, BitOr};
 use std::slice;
 
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
 /// or very large indexes (think pres, class), we can keep this small.
-// was 5
+///
+/// A sparse alloc of 2 keeps the comp vs sparse variants equal size in the non-overflow
+/// case. Larger means we are losing space in the comp case.
 const DEFAULT_SPARSE_ALLOC: usize = 2;
-// const DEFAULT_COMP_ALLOC: usize = 2;
-// const DEFAULT_SPARSE_ALLOC: usize = 5 + 8;
-// const DEFAULT_COMP_ALLOC: usize = 2 + 4;
-
-
-// 10 per range
+const AVG_RANGE_COMP_REQ: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,7 +48,7 @@ enum IDLState {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct IDLBitRange {
-    state: IDLState
+    state: IDLState,
 }
 
 impl IDLRange {
@@ -70,9 +66,9 @@ impl IDLRange {
 }
 
 impl Default for IDLBitRange {
-    fn default() -> Self  {
+    fn default() -> Self {
         IDLBitRange {
-            state: IDLState::Sparse(SmallVec::new())
+            state: IDLState::Sparse(SmallVec::new()),
         }
     }
 }
@@ -84,7 +80,7 @@ impl IDLBitRange {
 
     pub fn from_u64(id: u64) -> Self {
         IDLBitRange {
-            state: IDLState::Sparse(smallvec![id])
+            state: IDLState::Sparse(smallvec![id]),
         }
     }
 
@@ -109,29 +105,22 @@ impl IDLBitRange {
     pub fn len(&self) -> usize {
         match &self.state {
             IDLState::Sparse(list) => list.len(),
-            IDLState::Compressed(list) =>
-                list
-                    .iter()
-                    .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
+            IDLState::Compressed(list) => list
+                .iter()
+                .fold(0, |acc, i| (i.mask.count_ones() as usize) + acc),
         }
     }
 
     pub fn sum(&self) -> u64 {
         match &self.state {
             IDLState::Sparse(list) => list.iter().fold(0, |acc, x| x + acc),
-            IDLState::Compressed(list) =>
-                IDLBitRangeIter::new(&list)
-                    .fold(0, |acc, x| x + acc),
+            IDLState::Compressed(list) => IDLBitRangeIter::new(&list).fold(0, |acc, x| x + acc),
         }
     }
 
     pub fn contains(&self, id: u64) -> bool {
         match &self.state {
-            IDLState::Sparse(list) => {
-                list.as_slice()
-                    .binary_search(&id)
-                    .is_ok()
-            }
+            IDLState::Sparse(list) => list.as_slice().binary_search(&id).is_ok(),
             IDLState::Compressed(list) => {
                 let bvalue: u64 = id % 64;
                 let range: u64 = id - bvalue;
@@ -144,18 +133,11 @@ impl IDLBitRange {
                 } else {
                     false
                 }
-
             }
         }
     }
 
     pub unsafe fn push_id(&mut self, id: u64) {
-        if let IDLState::Sparse(list) = &self.state {
-            if list.len() >= DEFAULT_SPARSE_ALLOC {
-                self.compress()
-            }
-        };
-
         match &mut self.state {
             IDLState::Sparse(list) => {
                 list.push(id);
@@ -179,12 +161,6 @@ impl IDLBitRange {
     }
 
     pub fn insert_id(&mut self, id: u64) {
-        if let IDLState::Sparse(list) = &self.state {
-            if list.len() >= DEFAULT_SPARSE_ALLOC {
-                self.compress()
-            }
-        };
-
         match &mut self.state {
             IDLState::Sparse(list) => {
                 let r = list.binary_search(&id);
@@ -260,11 +236,19 @@ impl IDLBitRange {
         let mut prev_state = IDLState::Compressed(Vec::new());
         std::mem::swap(&mut prev_state, &mut self.state);
         match prev_state {
-            IDLState::Sparse(list) => {
-                list.into_iter().for_each(|i|
-                    unsafe { self.push_id(i); })
-            }
+            IDLState::Sparse(list) => list.into_iter().for_each(|i| unsafe {
+                self.push_id(i);
+            }),
             IDLState::Compressed(_) => panic!("Unexpected state!"),
+        }
+    }
+
+    fn should_compress(&self) -> bool {
+        if let IDLState::Compressed(list) = &self.state {
+            // num values / num ranges == avg range bits.
+            (self.len() / list.len()) >= AVG_RANGE_COMP_REQ
+        } else {
+            unreachable!();
         }
     }
 
@@ -297,11 +281,11 @@ impl IDLBitRange {
                 }
 
                 IDLBitRange {
-                    state: IDLState::Sparse(nlist)
+                    state: IDLState::Sparse(nlist),
                 }
             }
-            (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
-            (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+            (IDLState::Sparse(sparselist), IDLState::Compressed(list))
+            | (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
                 let mut nlist = SmallVec::new();
 
                 sparselist.iter().for_each(|id| {
@@ -318,7 +302,7 @@ impl IDLBitRange {
                 });
 
                 IDLBitRange {
-                    state: IDLState::Sparse(nlist)
+                    state: IDLState::Sparse(nlist),
                 }
             }
             (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
@@ -351,13 +335,12 @@ impl IDLBitRange {
                     IDLBitRange::new()
                 } else {
                     IDLBitRange {
-                        state: IDLState::Compressed(nlist)
+                        state: IDLState::Compressed(nlist),
                     }
                 }
             }
         }
     }
-
 
     #[inline(always)]
     fn bitor_inner(&self, rhs: &Self) -> Self {
@@ -401,11 +384,11 @@ impl IDLBitRange {
                 }
 
                 IDLBitRange {
-                    state: IDLState::Sparse(nlist)
+                    state: IDLState::Sparse(nlist),
                 }
             }
-            (IDLState::Sparse(sparselist), IDLState::Compressed(list)) |
-            (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+            (IDLState::Sparse(sparselist), IDLState::Compressed(list))
+            | (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
                 // Duplicate the compressed set.
                 let mut list = list.clone();
 
@@ -429,7 +412,7 @@ impl IDLBitRange {
                 });
 
                 IDLBitRange {
-                    state: IDLState::Compressed(list)
+                    state: IDLState::Compressed(list),
                 }
             }
             (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
@@ -479,7 +462,7 @@ impl IDLBitRange {
                     rnextrange = riter.next();
                 }
                 IDLBitRange {
-                    state: IDLState::Compressed(nlist)
+                    state: IDLState::Compressed(nlist),
                 }
             }
         } // end match
@@ -494,8 +477,11 @@ impl FromIterator<u64> for IDLBitRange {
         let iter = iter.into_iter();
         let (lower_bound, _) = iter.size_hint();
 
-        let mut new = IDLBitRange {
-            state: IDLState::Sparse(SmallVec::with_capacity(lower_bound))
+        let mut new_sparse = IDLBitRange {
+            state: IDLState::Sparse(SmallVec::with_capacity(lower_bound)),
+        };
+        let mut new_comp = IDLBitRange {
+            state: IDLState::Compressed(Vec::with_capacity((lower_bound / AVG_RANGE_COMP_REQ) + 1)),
         };
 
         let mut max_seen = 0;
@@ -503,15 +489,22 @@ impl FromIterator<u64> for IDLBitRange {
             if i >= max_seen {
                 // if we have a sorted list, we can take a fast append path.
                 unsafe {
-                    new.push_id(i);
+                    new_sparse.push_id(i);
+                    new_comp.push_id(i);
                 }
                 max_seen = i;
             } else {
                 // if not, we have to bst each time to get the right place.
-                new.insert_id(i);
+                new_sparse.insert_id(i);
+                new_comp.insert_id(i);
             }
         });
-        new
+
+        if new_comp.should_compress() {
+            new_comp
+        } else {
+            new_sparse
+        }
     }
 }
 
@@ -941,11 +934,12 @@ mod tests {
             2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
         ]);
         let idl_b = IDLBitRange::from_iter(1..1024);
-        let idl_expect = IDLBitRange::from_iter(vec![
+        let mut idl_expect = IDLBitRange::from_iter(vec![
             2, 3, 8, 35, 64, 128, 130, 150, 152, 180, 256, 800, 900,
         ]);
 
         idl_a.compress();
+        idl_expect.compress();
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
