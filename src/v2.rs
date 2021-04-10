@@ -30,8 +30,11 @@ const FAST_PATH_BST_SIZE: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename = "R")]
 struct IDLRange {
+    #[serde(rename = "r")]
     pub range: u64,
+    #[serde(rename = "m")]
     pub mask: u64,
 }
 
@@ -56,8 +59,11 @@ impl PartialEq for IDLRange {
 impl Eq for IDLRange {}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[serde(rename = "S")]
 enum IDLState {
+    #[serde(rename = "s")]
     Sparse(SmallVec<[u64; DEFAULT_SPARSE_ALLOC]>),
+    #[serde(rename = "c")]
     Compressed(Vec<IDLRange>),
 }
 
@@ -106,7 +112,7 @@ impl fmt::Debug for IDLBitRange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.state {
             IDLState::Sparse(list) => {
-                write!(f, "IDLBitRange (sparse values) {:?} (data) [ ", list.len());
+                write!(f, "IDLBitRange (sparse values) {:?} (data) [ ", list.len())?;
             }
             IDLState::Compressed(list) => {
                 write!(f, "IDLBitRange (compressed) {:?} (decompressed) [ ", list)?;
@@ -141,7 +147,9 @@ impl fmt::Debug for IDLBitRange {
 /// assert_eq!(idl_result, idl_expect);
 /// ```
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename = "IDLV2")]
 pub struct IDLBitRange {
+    #[serde(rename = "t")]
     state: IDLState,
 }
 
