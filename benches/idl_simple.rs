@@ -210,7 +210,8 @@ impl AndNot for &IDLSimple {
 
 #[cfg(test)]
 mod tests {
-    use super::{AndNot, IDLSimple};
+    use super::IDLSimple;
+    use idlset::AndNot;
     use std::iter::FromIterator;
 
     #[test]

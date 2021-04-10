@@ -151,7 +151,7 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         IDLBitRange::from_iter(i.1.clone()),
     );
 
-    let mut v2i = V2Duplex(
+    let v2i = V2Duplex(
         IDLBitRangeV2::from_iter(i.0.clone()),
         IDLBitRangeV2::from_iter(i.1.clone()),
     );
@@ -172,7 +172,7 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
 
     group.finish();
 
-    let mut v2i = V2Duplex(
+    let v2i = V2Duplex(
         IDLBitRangeV2::from_iter(i.0.clone()),
         IDLBitRangeV2::from_iter(i.1.clone()),
     );

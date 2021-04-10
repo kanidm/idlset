@@ -20,7 +20,7 @@ serde_derive = "1.0"
 smallvec = { version = "1.6", features = ["serde"] }
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = { version = "0.3", features = ["html_reports"]}
 
 [[bench]]
 name = "bench_idl"
