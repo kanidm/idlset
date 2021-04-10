@@ -20,7 +20,13 @@ use std::slice;
 /// A sparse alloc of 2 keeps the comp vs sparse variants equal size in the non-overflow
 /// case. Larger means we are losing space in the comp case.
 const DEFAULT_SPARSE_ALLOC: usize = 2;
-const AVG_RANGE_COMP_REQ: usize = 8;
+
+// After a lot of benchmarking, the cross over point is when there is an average
+// of 12 bits set in a compressed range for general case to be faster.
+const AVG_RANGE_COMP_REQ: usize = 12;
+
+const FAST_PATH_BST: usize = DEFAULT_SPARSE_ALLOC;
+const FAST_PATH_BST_RATIO: usize = FAST_PATH_BST * 4;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -53,6 +59,30 @@ impl Eq for IDLRange {}
 enum IDLState {
     Sparse(SmallVec<[u64; DEFAULT_SPARSE_ALLOC]>),
     Compressed(Vec<IDLRange>),
+}
+
+impl IDLState {
+    fn sparse_bitand_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
+        let mut nlist = SmallVec::new();
+        smol.iter().for_each(|id| {
+            if let Ok(_) = lrg.binary_search(id) {
+                nlist.push(*id)
+            }
+        });
+        IDLState::Sparse(nlist)
+    }
+
+    fn sparse_bitor_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
+        let mut nlist = SmallVec::with_capacity(lrg.len() + smol.len());
+        nlist.extend_from_slice(lrg);
+
+        smol.iter().for_each(|id| {
+            if let Err(idx) = lrg.binary_search(id) {
+                nlist.insert(idx, *id)
+            }
+        });
+        IDLState::Sparse(nlist)
+    }
 }
 
 /// An ID List of `u64` values, that uses a compressed representation of `u64` to
@@ -302,40 +332,48 @@ impl IDLBitRange {
     fn bitand_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
-                // If one is significantly smaller, can we do a binary search instead?
-                let mut nlist = SmallVec::new();
+                // Fast path if there is a large difference in the sizes.
+                let state = if lhs.len() <= FAST_PATH_BST && rhs.len() >= FAST_PATH_BST_RATIO {
+                    IDLState::sparse_bitand_fast_path(lhs.as_slice(), rhs.as_slice())
+                } else if rhs.len() <= FAST_PATH_BST && lhs.len() >= FAST_PATH_BST_RATIO {
+                    IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
+                } else {
+                    let mut nlist = SmallVec::new();
 
-                let mut liter = lhs.iter();
-                let mut riter = rhs.iter();
+                    let mut liter = lhs.iter();
+                    let mut riter = rhs.iter();
 
-                let mut lnext = liter.next();
-                let mut rnext = riter.next();
+                    let mut lnext = liter.next();
+                    let mut rnext = riter.next();
 
-                while lnext.is_some() && rnext.is_some() {
-                    let l = lnext.unwrap();
-                    let r = rnext.unwrap();
+                    while lnext.is_some() && rnext.is_some() {
+                        let l = lnext.unwrap();
+                        let r = rnext.unwrap();
 
-                    match l.cmp(r) {
-                        Ordering::Equal => {
-                            nlist.push(*l);
-                            lnext = liter.next();
-                            rnext = riter.next();
-                        }
-                        Ordering::Less => {
-                            lnext = liter.next();
-                        }
-                        Ordering::Greater => {
-                            rnext = riter.next();
+                        match l.cmp(r) {
+                            Ordering::Equal => {
+                                nlist.push(*l);
+                                lnext = liter.next();
+                                rnext = riter.next();
+                            }
+                            Ordering::Less => {
+                                lnext = liter.next();
+                            }
+                            Ordering::Greater => {
+                                rnext = riter.next();
+                            }
                         }
                     }
-                }
+                    IDLState::Sparse(nlist)
+                };
 
-                IDLBitRange {
-                    state: IDLState::Sparse(nlist),
-                }
+                IDLBitRange { state }
             }
             (IDLState::Sparse(sparselist), IDLState::Compressed(list))
             | (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
+                // Could be be better to decompress instead? This currently
+                // assumes sparse is MUCH smaller than compressed ...
+
                 let mut nlist = SmallVec::new();
 
                 sparselist.iter().for_each(|id| {
@@ -400,50 +438,57 @@ impl IDLBitRange {
     fn bitor_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
-                let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
-                let mut liter = lhs.iter();
-                let mut riter = rhs.iter();
+                // If one is much smaller, we can clone the larger and just insert.
+                let state = if lhs.len() <= FAST_PATH_BST && rhs.len() >= FAST_PATH_BST_RATIO {
+                    IDLState::sparse_bitor_fast_path(lhs.as_slice(), rhs.as_slice())
+                } else if rhs.len() <= FAST_PATH_BST && lhs.len() >= FAST_PATH_BST_RATIO {
+                    IDLState::sparse_bitor_fast_path(rhs.as_slice(), lhs.as_slice())
+                } else {
+                    let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
+                    let mut liter = lhs.iter();
+                    let mut riter = rhs.iter();
 
-                let mut lnext = liter.next();
-                let mut rnext = riter.next();
+                    let mut lnext = liter.next();
+                    let mut rnext = riter.next();
 
-                while lnext.is_some() && rnext.is_some() {
-                    let l = lnext.unwrap();
-                    let r = rnext.unwrap();
+                    while lnext.is_some() && rnext.is_some() {
+                        let l = lnext.unwrap();
+                        let r = rnext.unwrap();
 
-                    let n = match l.cmp(&r) {
-                        Ordering::Equal => {
-                            lnext = liter.next();
-                            rnext = riter.next();
-                            l
-                        }
-                        Ordering::Less => {
-                            lnext = liter.next();
-                            l
-                        }
-                        Ordering::Greater => {
-                            rnext = riter.next();
-                            r
-                        }
-                    };
-                    nlist.push(*n);
-                }
+                        let n = match l.cmp(&r) {
+                            Ordering::Equal => {
+                                lnext = liter.next();
+                                rnext = riter.next();
+                                l
+                            }
+                            Ordering::Less => {
+                                lnext = liter.next();
+                                l
+                            }
+                            Ordering::Greater => {
+                                rnext = riter.next();
+                                r
+                            }
+                        };
+                        nlist.push(*n);
+                    }
 
-                while lnext.is_some() {
-                    let l = lnext.unwrap();
-                    nlist.push(*l);
-                    lnext = liter.next();
-                }
+                    while lnext.is_some() {
+                        let l = lnext.unwrap();
+                        nlist.push(*l);
+                        lnext = liter.next();
+                    }
 
-                while rnext.is_some() {
-                    let r = rnext.unwrap();
-                    nlist.push(*r);
-                    rnext = riter.next();
-                }
+                    while rnext.is_some() {
+                        let r = rnext.unwrap();
+                        nlist.push(*r);
+                        rnext = riter.next();
+                    }
 
-                IDLBitRange {
-                    state: IDLState::Sparse(nlist),
-                }
+                    IDLState::Sparse(nlist)
+                };
+
+                IDLBitRange { state }
             }
             (IDLState::Sparse(sparselist), IDLState::Compressed(list))
             | (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
