@@ -294,6 +294,30 @@ fn bench_duplex(c: &mut Criterion) {
         vec1.push(64 * i + 25);
         vec1.push(64 * i + 30);
         vec1.push(64 * i + 35);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "13_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
         vec1.push(64 * i + 40);
         vec1.push(64 * i + 45);
         vec1.push(64 * i + 50);
@@ -313,15 +337,22 @@ fn bench_duplex(c: &mut Criterion) {
     }
 
     let i = Duplex(vec1, vec2);
-    do_bench_duplex(c, "13_ludwig_sparse", i);
+    do_bench_duplex(c, "14_ludwig_sparse", i);
 
     let mut vec1 = Vec::new();
     for i in 1..300 {
         vec1.push(64 * i + 5);
         vec1.push(64 * i + 7);
         vec1.push(64 * i + 15);
+        vec1.push(64 * i + 17);
+
+        vec1.push(64 * i + 18);
         vec1.push(64 * i + 20);
         vec1.push(64 * i + 25);
+        vec1.push(64 * i + 26);
+
+        vec1.push(64 * i + 27);
+        vec1.push(64 * i + 28);
         vec1.push(64 * i + 30);
         vec1.push(64 * i + 35);
     }
@@ -330,14 +361,64 @@ fn bench_duplex(c: &mut Criterion) {
         vec2.push(64 * i + 5);
         vec2.push(64 * i + 7);
         vec2.push(64 * i + 15);
+        vec2.push(64 * i + 17);
+        vec2.push(64 * i + 18);
         vec2.push(64 * i + 20);
         vec2.push(64 * i + 25);
+        vec2.push(64 * i + 26);
+        vec2.push(64 * i + 27);
+        vec2.push(64 * i + 28);
         vec2.push(64 * i + 30);
         vec2.push(64 * i + 35);
     }
 
     let i = Duplex(vec1, vec2);
-    do_bench_duplex(c, "14_ludwig_sparse", i);
+    do_bench_duplex(c, "15_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 17);
+
+        vec1.push(64 * i + 18);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 26);
+
+        vec1.push(64 * i + 27);
+        vec1.push(64 * i + 28);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
+
+        vec1.push(64 * i + 40);
+        vec1.push(64 * i + 45);
+        vec1.push(64 * i + 50);
+        vec1.push(64 * i + 55);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 17);
+        vec2.push(64 * i + 18);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 26);
+        vec2.push(64 * i + 27);
+        vec2.push(64 * i + 28);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+        vec2.push(64 * i + 40);
+        vec2.push(64 * i + 45);
+        vec2.push(64 * i + 50);
+        vec2.push(64 * i + 55);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "16_ludwig_sparse", i);
 }
 
 fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
