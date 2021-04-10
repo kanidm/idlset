@@ -25,8 +25,8 @@ const DEFAULT_SPARSE_ALLOC: usize = 2;
 // of 12 bits set in a compressed range for general case to be faster.
 const AVG_RANGE_COMP_REQ: usize = 12;
 
-const FAST_PATH_BST: usize = DEFAULT_SPARSE_ALLOC;
-const FAST_PATH_BST_RATIO: usize = FAST_PATH_BST * 4;
+const FAST_PATH_BST_RATIO: usize = 8;
+const FAST_PATH_BST_SIZE: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -333,11 +333,15 @@ impl IDLBitRange {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // Fast path if there is a large difference in the sizes.
-                let state = if lhs.len() <= FAST_PATH_BST && rhs.len() >= FAST_PATH_BST_RATIO {
+                let state = if
+                    (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE) ||
+                    (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO) {
                     IDLState::sparse_bitand_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else if rhs.len() <= FAST_PATH_BST && lhs.len() >= FAST_PATH_BST_RATIO {
+                } else
+                    if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
+                    // In the future, we can use partition_dedup with a merge + sort, then pull out the dups.
                     let mut nlist = SmallVec::new();
 
                     let mut liter = lhs.iter();
@@ -438,10 +442,14 @@ impl IDLBitRange {
     fn bitor_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
+                /*
                 // If one is much smaller, we can clone the larger and just insert.
-                let state = if lhs.len() <= FAST_PATH_BST && rhs.len() >= FAST_PATH_BST_RATIO {
+                let state = if
+                    (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE) ||
+                    (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO) {
                     IDLState::sparse_bitor_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else if rhs.len() <= FAST_PATH_BST && lhs.len() >= FAST_PATH_BST_RATIO {
+                } else
+                    if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitor_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
                     let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
@@ -487,6 +495,16 @@ impl IDLBitRange {
 
                     IDLState::Sparse(nlist)
                 };
+                */
+
+                let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
+                nlist.extend_from_slice(lhs.as_slice());
+                nlist.extend_from_slice(rhs.as_slice());
+                nlist.as_mut_slice().sort_unstable();
+                nlist.dedup();
+                nlist.shrink_to_fit();
+
+                let state = IDLState::Sparse(nlist);
 
                 IDLBitRange { state }
             }
