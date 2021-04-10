@@ -8,10 +8,14 @@ use std::slice;
 /// Default number of IDL ranges to keep in stack before we spill into heap. As many
 /// operations in a system like kanidm are either single item indexes (think equality)
 /// or very large indexes (think pres, class), we can keep this small.
-const DEFAULT_SPARSE_ALLOC: usize = 5;
+// was 5
+const DEFAULT_SPARSE_ALLOC: usize = 2;
 // const DEFAULT_COMP_ALLOC: usize = 2;
 // const DEFAULT_SPARSE_ALLOC: usize = 5 + 8;
 // const DEFAULT_COMP_ALLOC: usize = 2 + 4;
+
+
+// 10 per range
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Debug, Clone)]
