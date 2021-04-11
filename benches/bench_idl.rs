@@ -6,7 +6,8 @@ mod idl_simple;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use idl_simple::IDLSimple;
-use idlset::IDLBitRange;
+use idlset::v1::IDLBitRange;
+use idlset::v2::IDLBitRange as IDLBitRangeV2;
 use std::iter::FromIterator;
 
 // Trying to make these work with trait bounds is literally too hard
@@ -27,6 +28,21 @@ struct RDuplex(IDLBitRange, IDLBitRange);
 impl std::fmt::Display for RDuplex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} - {}", self.0.len(), self.1.len())
+    }
+}
+
+struct V2Duplex(IDLBitRangeV2, IDLBitRangeV2);
+
+impl std::fmt::Display for V2Duplex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} - {} {}",
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed()
+        )
     }
 }
 
@@ -60,6 +76,23 @@ impl std::fmt::Display for RTriplex {
     }
 }
 
+struct V2Triplex(IDLBitRangeV2, IDLBitRangeV2, IDLBitRangeV2);
+
+impl std::fmt::Display for V2Triplex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} -- {} {} -- {} {}",
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed(),
+            self.2.len(),
+            self.2.is_compressed(),
+        )
+    }
+}
+
 struct SComplex(IDLSimple, IDLSimple, Vec<IDLSimple>);
 
 impl std::fmt::Display for SComplex {
@@ -88,6 +121,22 @@ impl std::fmt::Display for RComplex {
     }
 }
 
+struct V2Complex(IDLBitRangeV2, IDLBitRangeV2, Vec<IDLBitRangeV2>);
+
+impl std::fmt::Display for V2Complex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} -- {} {} -- [{}]",
+            self.0.len(),
+            self.0.is_compressed(),
+            self.1.len(),
+            self.1.is_compressed(),
+            self.2.len()
+        )
+    }
+}
+
 // =========
 
 fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
@@ -102,6 +151,11 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         IDLBitRange::from_iter(i.1.clone()),
     );
 
+    let v2i = V2Duplex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+    );
+
     group.bench_with_input(BenchmarkId::new("Simple", &si), &si, |t, SDuplex(a, b)| {
         t.iter(|| { b | a }.sum())
     });
@@ -110,7 +164,18 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &ri,
         |t, RDuplex(a, b)| t.iter(|| { b | a }.sum()),
     );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Duplex(a, b)| t.iter(|| { b | a }.sum()),
+    );
+
     group.finish();
+
+    let v2i = V2Duplex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+    );
 
     let mut group = c.benchmark_group(&format!("{}_intersection", label));
     group.bench_with_input(BenchmarkId::new("Simple", &si), &si, |t, SDuplex(a, b)| {
@@ -121,6 +186,13 @@ fn do_bench_duplex(c: &mut Criterion, label: &str, i: Duplex) {
         &ri,
         |t, RDuplex(a, b)| t.iter(|| { b & a }.sum()),
     );
+
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Duplex(a, b)| t.iter(|| { b & a }.sum()),
+    );
+
     group.finish();
 }
 
@@ -192,6 +264,161 @@ fn bench_duplex(c: &mut Criterion) {
 
     let i = Duplex(vec1, vec2);
     do_bench_duplex(c, "11_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "12_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "13_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
+        vec1.push(64 * i + 40);
+        vec1.push(64 * i + 45);
+        vec1.push(64 * i + 50);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+        vec2.push(64 * i + 40);
+        vec2.push(64 * i + 45);
+        vec2.push(64 * i + 50);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "14_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 17);
+
+        vec1.push(64 * i + 18);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 26);
+
+        vec1.push(64 * i + 27);
+        vec1.push(64 * i + 28);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 17);
+        vec2.push(64 * i + 18);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 26);
+        vec2.push(64 * i + 27);
+        vec2.push(64 * i + 28);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "15_ludwig_sparse", i);
+
+    let mut vec1 = Vec::new();
+    for i in 1..300 {
+        vec1.push(64 * i + 5);
+        vec1.push(64 * i + 7);
+        vec1.push(64 * i + 15);
+        vec1.push(64 * i + 17);
+
+        vec1.push(64 * i + 18);
+        vec1.push(64 * i + 20);
+        vec1.push(64 * i + 25);
+        vec1.push(64 * i + 26);
+
+        vec1.push(64 * i + 27);
+        vec1.push(64 * i + 28);
+        vec1.push(64 * i + 30);
+        vec1.push(64 * i + 35);
+
+        vec1.push(64 * i + 40);
+        vec1.push(64 * i + 45);
+        vec1.push(64 * i + 50);
+        vec1.push(64 * i + 55);
+    }
+    let mut vec2 = Vec::new();
+    for i in 200..500 {
+        vec2.push(64 * i + 5);
+        vec2.push(64 * i + 7);
+        vec2.push(64 * i + 15);
+        vec2.push(64 * i + 17);
+        vec2.push(64 * i + 18);
+        vec2.push(64 * i + 20);
+        vec2.push(64 * i + 25);
+        vec2.push(64 * i + 26);
+        vec2.push(64 * i + 27);
+        vec2.push(64 * i + 28);
+        vec2.push(64 * i + 30);
+        vec2.push(64 * i + 35);
+        vec2.push(64 * i + 40);
+        vec2.push(64 * i + 45);
+        vec2.push(64 * i + 50);
+        vec2.push(64 * i + 55);
+    }
+
+    let i = Duplex(vec1, vec2);
+    do_bench_duplex(c, "16_ludwig_sparse", i);
 }
 
 fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
@@ -205,6 +432,11 @@ fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
         IDLBitRange::from_iter(i.1.clone()),
         IDLBitRange::from_iter(i.2.clone()),
     );
+    let v2i = V2Triplex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+        IDLBitRangeV2::from_iter(i.2.clone()),
+    );
 
     let mut group = c.benchmark_group(&format!("{}_union", label));
     group.bench_with_input(
@@ -216,6 +448,11 @@ fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
         BenchmarkId::new("Compressed", &ri),
         &ri,
         |t, RTriplex(a, b, c)| t.iter(|| { &(a | b) | c }.sum()),
+    );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Triplex(a, b, c)| t.iter(|| { &(a | b) | c }.sum()),
     );
     group.finish();
 
@@ -230,6 +467,11 @@ fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
         &ri,
         |t, RTriplex(a, b, c)| t.iter(|| { &(a & b) & c }.sum()),
     );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Triplex(a, b, c)| t.iter(|| { &(a & b) & c }.sum()),
+    );
     group.finish();
 
     let mut group = c.benchmark_group(&format!("{}_intersection_union", label));
@@ -243,6 +485,11 @@ fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
         &ri,
         |t, RTriplex(a, b, c)| t.iter(|| { &(a & b) | c }.sum()),
     );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Triplex(a, b, c)| t.iter(|| { &(a & b) | c }.sum()),
+    );
     group.finish();
 
     let mut group = c.benchmark_group(&format!("{}_union_intersection", label));
@@ -255,6 +502,11 @@ fn do_bench_triplex(c: &mut Criterion, label: &str, i: Triplex) {
         BenchmarkId::new("Compressed", &ri),
         &ri,
         |t, RTriplex(a, b, c)| t.iter(|| { &(a | b) & c }.sum()),
+    );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Triplex(a, b, c)| t.iter(|| { &(a | b) & c }.sum()),
     );
     group.finish();
 }
@@ -375,6 +627,11 @@ fn do_bench_complex(c: &mut Criterion, label: &str, i: Triplex) {
         IDLBitRange::from_iter(i.1.clone()),
         i.2.iter().map(|&x| IDLBitRange::from_u64(x)).collect(),
     );
+    let v2i = V2Complex(
+        IDLBitRangeV2::from_iter(i.0.clone()),
+        IDLBitRangeV2::from_iter(i.1.clone()),
+        i.2.iter().map(|&x| IDLBitRangeV2::from_u64(x)).collect(),
+    );
 
     group.bench_with_input(
         BenchmarkId::new("Simple", &si),
@@ -392,6 +649,16 @@ fn do_bench_complex(c: &mut Criterion, label: &str, i: Triplex) {
         |t, RComplex(a, b, c)| {
             t.iter(|| {
                 let idl_inter = c.iter().fold(IDLBitRange::new(), |acc, x| &acc | x);
+                { &(a & b) & &idl_inter }.sum()
+            })
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("Compressed V2", &ri),
+        &v2i,
+        |t, V2Complex(a, b, c)| {
+            t.iter(|| {
+                let idl_inter = c.iter().fold(IDLBitRangeV2::new(), |acc, x| &acc | x);
                 { &(a & b) & &idl_inter }.sum()
             })
         },

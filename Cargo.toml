@@ -1,6 +1,6 @@
 [package]
 name = "idlset"
-version = "0.1.13"
+version = "0.2.0"
 authors = ["William Brown <william@blackhats.net.au>"]
 edition = "2018"
 
@@ -17,15 +17,13 @@ license = "MPL-2.0"
 # time = "0.2"
 serde = "1.0"
 serde_derive = "1.0"
-smallvec = { version = "1.4", features = ["serde"], optional = true }
+smallvec = { version = "1.6", features = ["serde"] }
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = { version = "0.3", features = ["html_reports"]}
 
 [[bench]]
 name = "bench_idl"
 harness = false
 
 [features]
-use_smallvec = ["smallvec"]
-tracksize = []
