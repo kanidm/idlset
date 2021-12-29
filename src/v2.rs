@@ -71,7 +71,7 @@ impl IDLState {
     fn sparse_bitand_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
         let mut nlist = SmallVec::new();
         smol.iter().for_each(|id| {
-            if let Ok(_) = lrg.binary_search(id) {
+            if lrg.binary_search(id).is_ok() {
                 nlist.push(*id)
             }
         });
@@ -252,7 +252,7 @@ impl IDLBitRange {
     pub fn sum(&self) -> u64 {
         match &self.state {
             IDLState::Sparse(list) => list.iter().fold(0, |acc, x| x + acc),
-            IDLState::Compressed(list) => IDLBitRangeIterComp::new(&list).fold(0, |acc, x| x + acc),
+            IDLState::Compressed(list) => IDLBitRangeIterComp::new(list).fold(0, |acc, x| x + acc),
         }
     }
 
@@ -430,10 +430,10 @@ impl IDLBitRange {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // Fast path if there is a large difference in the sizes.
                 let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
-                    || (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
+                    || (!lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
                 {
                     IDLState::sparse_bitand_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
+                } else if !rhs.is_empty() && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
                     let mut nlist = SmallVec::new();
@@ -538,10 +538,10 @@ impl IDLBitRange {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // If one is much smaller, we can clone the larger and just insert.
                 let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
-                    || (lhs.len() > 0 && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
+                    || (!lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
                 {
                     IDLState::sparse_bitor_fast_path(lhs.as_slice(), rhs.as_slice())
-                } else if rhs.len() > 0 && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
+                } else if !rhs.is_empty() && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitor_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
                     let mut nlist = SmallVec::with_capacity(lhs.len() + rhs.len());
@@ -555,7 +555,7 @@ impl IDLBitRange {
                         let l = lnext.unwrap();
                         let r = rnext.unwrap();
 
-                        let n = match l.cmp(&r) {
+                        let n = match l.cmp(r) {
                             Ordering::Equal => {
                                 lnext = liter.next();
                                 rnext = riter.next();
@@ -1103,9 +1103,9 @@ impl<'a> IntoIterator for &'a IDLBitRange {
 
     fn into_iter(self) -> IDLBitRangeIter<'a> {
         match &self.state {
-            IDLState::Sparse(list) => IDLBitRangeIter::Sparse((&list).into_iter()),
+            IDLState::Sparse(list) => IDLBitRangeIter::Sparse((list).into_iter()),
             IDLState::Compressed(list) => {
-                let mut liter = (&list).iter();
+                let mut liter = (list).iter();
                 let nrange = liter.next();
                 IDLBitRangeIter::Compressed(IDLBitRangeIterComp {
                     rangeiter: liter,

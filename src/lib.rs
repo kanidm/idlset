@@ -11,6 +11,8 @@
 //! other domains that require logical set operations.
 //!
 
+#![deny(warnings)]
+#![warn(unused_extern_crates)]
 #![warn(missing_docs)]
 
 #[macro_use]
