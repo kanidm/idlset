@@ -23,7 +23,10 @@ const DEFAULT_SPARSE_ALLOC: usize = 2;
 
 // After a lot of benchmarking, the cross over point is when there is an average
 // of 12 bits set in a compressed range for general case to be faster.
+#[cfg(target_arch = "x86_64")]
 const AVG_RANGE_COMP_REQ: usize = 12;
+#[cfg(target_arch = "aarch64")]
+const AVG_RANGE_COMP_REQ: usize = 5;
 
 const FAST_PATH_BST_RATIO: usize = 8;
 const FAST_PATH_BST_SIZE: usize = 8;
