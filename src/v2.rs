@@ -25,6 +25,7 @@ const DEFAULT_SPARSE_ALLOC: usize = 2;
 // of 12 bits set in a compressed range for general case to be faster.
 #[cfg(target_arch = "x86_64")]
 const AVG_RANGE_COMP_REQ: usize = 12;
+// We improve intersection over union performance.
 #[cfg(target_arch = "aarch64")]
 const AVG_RANGE_COMP_REQ: usize = 5;
 
