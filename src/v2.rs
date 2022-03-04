@@ -30,7 +30,6 @@ const AVG_RANGE_COMP_REQ: usize = 12;
 const AVG_RANGE_COMP_REQ: usize = 5;
 
 const FAST_PATH_BST_RATIO: usize = 8;
-const FAST_PATH_BST_SIZE: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
 #[derive(Serialize, Deserialize, Clone)]
@@ -83,7 +82,7 @@ enum IDLState {
 
 impl IDLState {
     fn sparse_bitand_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
-        let mut nlist = SmallVec::new();
+        let mut nlist = SmallVec::with_capacity(smol.len());
         // We cache the idx inbetween to narrow the bst sizes.
         let mut idx_min = 0;
         smol.iter().for_each(|id| {
@@ -458,15 +457,19 @@ impl IDLBitRange {
     fn bitand_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
-                // Fast path if there is a large difference in the sizes.
-                let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
-                    || (!lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
-                {
+                // Fast path if there is a really large difference in the sizes.
+                let state = if !lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(lhs.as_slice(), rhs.as_slice())
                 } else if !rhs.is_empty() && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitand_fast_path(rhs.as_slice(), lhs.as_slice())
                 } else {
-                    let mut nlist = SmallVec::new();
+                    let x = if rhs.len() > lhs.len() {
+                        rhs.len()
+                    } else {
+                        lhs.len()
+                    };
+
+                    let mut nlist = SmallVec::with_capacity(x);
 
                     let mut liter = lhs.iter();
                     let mut riter = rhs.iter();
@@ -502,7 +505,7 @@ impl IDLBitRange {
                 // Could be be better to decompress instead? This currently
                 // assumes sparse is MUCH smaller than compressed ...
 
-                let mut nlist = SmallVec::new();
+                let mut nlist = SmallVec::with_capacity(sparselist.len());
                 let mut idx_min = 0;
 
                 sparselist.iter().for_each(|id| {
@@ -575,9 +578,7 @@ impl IDLBitRange {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
                 // If one is much smaller, we can clone the larger and just insert.
-                let state = if (rhs.len() + lhs.len() <= FAST_PATH_BST_SIZE)
-                    || (!lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO)
-                {
+                let state = if !lhs.is_empty() && (rhs.len() / lhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitor_fast_path(lhs.as_slice(), rhs.as_slice())
                 } else if !rhs.is_empty() && (lhs.len() / rhs.len()) >= FAST_PATH_BST_RATIO {
                     IDLState::sparse_bitor_fast_path(rhs.as_slice(), lhs.as_slice())
@@ -741,7 +742,7 @@ impl IDLBitRange {
     fn bitandnot_inner(&self, rhs: &Self) -> Self {
         match (&self.state, &rhs.state) {
             (IDLState::Sparse(lhs), IDLState::Sparse(rhs)) => {
-                let mut nlist = SmallVec::new();
+                let mut nlist = SmallVec::with_capacity(lhs.len());
 
                 let mut liter = lhs.iter();
                 let mut riter = rhs.iter();
@@ -1196,6 +1197,7 @@ impl<'a> IntoIterator for &'a IDLBitRange {
 #[cfg(test)]
 mod tests {
     use super::IDLBitRange;
+    use super::IDLState;
     use super::AVG_RANGE_COMP_REQ;
     use crate::AndNot;
     use std::iter::FromIterator;
@@ -1780,5 +1782,11 @@ mod tests {
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
+    }
+
+    #[test]
+    fn test_sizeof_idlstate() {
+        let sz = std::mem::size_of::<IDLState>();
+        eprintln!("{}", sz);
     }
 }
