@@ -33,13 +33,23 @@ const FAST_PATH_BST_RATIO: usize = 8;
 const FAST_PATH_BST_SIZE: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename = "R")]
 struct IDLRange {
     #[serde(rename = "r")]
     pub range: u64,
     #[serde(rename = "m")]
     pub mask: u64,
+}
+
+impl fmt::Debug for IDLRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "IDLRange {{ range: {}, mask: {:x} }}",
+            self.range, self.mask
+        )
+    }
 }
 
 impl Ord for IDLRange {
@@ -74,9 +84,16 @@ enum IDLState {
 impl IDLState {
     fn sparse_bitand_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
         let mut nlist = SmallVec::new();
+        // We cache the idx inbetween to narrow the bst sizes.
+        let mut idx_min = 0;
         smol.iter().for_each(|id| {
-            if lrg.binary_search(id).is_ok() {
-                nlist.push(*id)
+            let (_, partition) = lrg.split_at(idx_min);
+            if let Ok(idx) = partition.binary_search(id) {
+                debug_assert!(Ok(idx + idx_min) == lrg.binary_search(id));
+                let idx = idx + idx_min;
+                nlist.push(*id);
+                debug_assert!(idx >= idx_min);
+                idx_min = idx;
             }
         });
         IDLState::Sparse(nlist)
@@ -86,11 +103,20 @@ impl IDLState {
         let mut nlist = SmallVec::with_capacity(lrg.len() + smol.len());
         nlist.extend_from_slice(lrg);
 
+        let mut idx_min = 0;
         smol.iter().for_each(|id| {
-            if let Err(idx) = nlist.binary_search(id) {
+            let (_, partition) = nlist.split_at(idx_min);
+            if let Err(idx) = partition.binary_search(id) {
+                debug_assert!(Err(idx + idx_min) == nlist.binary_search(id));
+                let idx = idx + idx_min;
                 nlist.insert(idx, *id);
+                debug_assert!(idx >= idx_min);
+                if idx != 0 {
+                    idx_min = idx - 1;
+                }
             }
         });
+
         IDLState::Sparse(nlist)
     }
 }
@@ -477,17 +503,25 @@ impl IDLBitRange {
                 // assumes sparse is MUCH smaller than compressed ...
 
                 let mut nlist = SmallVec::new();
+                let mut idx_min = 0;
 
                 sparselist.iter().for_each(|id| {
                     let bvalue: u64 = id % 64;
                     let range: u64 = id - bvalue;
                     let mask = 1 << bvalue;
-                    if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
+                    let (_, partition) = list.split_at(idx_min);
+                    if let Ok(idx) = partition.binary_search_by(|v| v.range.cmp(&range)) {
+                        debug_assert!(
+                            Ok(idx + idx_min) == list.binary_search_by(|v| v.range.cmp(&range))
+                        );
+                        let idx = idx + idx_min;
                         // We know this is safe and exists due to binary search.
                         let existing = unsafe { list.get_unchecked(idx) };
                         if (existing.mask & mask) > 0 {
                             nlist.push(*id);
                         }
+                        debug_assert!(idx >= idx_min);
+                        idx_min = idx;
                     }
                 });
 
@@ -610,6 +644,7 @@ impl IDLBitRange {
             | (IDLState::Compressed(list), IDLState::Sparse(sparselist)) => {
                 // Duplicate the compressed set.
                 let mut list = list.clone();
+                let mut idx_min = 0;
 
                 sparselist.iter().for_each(|id| {
                     // Same algo as insert id.
@@ -618,14 +653,25 @@ impl IDLBitRange {
 
                     let candidate = IDLRange::new(range, 1 << bvalue);
 
-                    let r = list.binary_search(&candidate);
+                    let (_, partition) = list.split_at(idx_min);
+                    let r = partition.binary_search(&candidate);
                     match r {
                         Ok(idx) => {
+                            debug_assert!(Ok(idx + idx_min) == list.binary_search(&candidate));
+                            let idx = idx + idx_min;
                             let mut existing = list.get_mut(idx).unwrap();
                             existing.mask |= candidate.mask;
+                            debug_assert!(idx >= idx_min);
+                            idx_min = idx;
                         }
                         Err(idx) => {
+                            debug_assert!(Err(idx + idx_min) == list.binary_search(&candidate));
+                            let idx = idx + idx_min;
                             list.insert(idx, candidate);
+                            debug_assert!(idx >= idx_min);
+                            if idx != 0 {
+                                idx_min = idx - 1;
+                            }
                         }
                     };
                 });
@@ -734,22 +780,42 @@ impl IDLBitRange {
                 }
             }
             (IDLState::Sparse(sparselist), IDLState::Compressed(list)) => {
-                let mut nlist = SmallVec::new();
+                let mut nlist = SmallVec::with_capacity(sparselist.len());
 
+                let mut idx_min = 0;
                 sparselist.iter().for_each(|id| {
                     let bvalue: u64 = id % 64;
                     let range: u64 = id - bvalue;
                     let mask = 1 << bvalue;
-                    if let Ok(idx) = list.binary_search_by(|v| v.range.cmp(&range)) {
-                        // Okay the range is there ...
-                        let existing = unsafe { list.get_unchecked(idx) };
-                        if (existing.mask & mask) == 0 {
-                            // It didn't match the mask, so it's not in right.
-                            nlist.push(*id);
+                    let (_, partition) = list.split_at(idx_min);
+                    match partition.binary_search_by(|v| v.range.cmp(&range)) {
+                        Ok(idx) => {
+                            debug_assert!(
+                                Ok(idx + idx_min) == list.binary_search_by(|v| v.range.cmp(&range))
+                            );
+                            let idx = idx + idx_min;
+                            // Okay the range is there ...
+                            let existing = unsafe { list.get_unchecked(idx) };
+                            if (existing.mask & mask) == 0 {
+                                // It didn't match the mask, so it's not in right.
+                                nlist.push(*id);
+                            }
+                            debug_assert!(idx >= idx_min);
+                            // Avoid an edge case where idx_min >= list.len
+                            idx_min = idx;
                         }
-                    } else {
-                        // Didn't find the range, push.
-                        nlist.push(*id);
+                        Err(idx) => {
+                            debug_assert!(
+                                Err(idx + idx_min)
+                                    == list.binary_search_by(|v| v.range.cmp(&range))
+                            );
+                            let idx = idx + idx_min;
+                            // Didn't find the range, push.
+                            nlist.push(*id);
+                            if idx != 0 {
+                                idx_min = idx - 1;
+                            }
+                        }
                     }
                 });
 
@@ -761,17 +827,23 @@ impl IDLBitRange {
                 let mut nlist = list.clone();
                 // This assumes the sparse is much much smaller and fragmented.
                 // Alternately, we could compress right, and use the lower algo.
+                let mut idx_min = 0;
                 sparselist.iter().for_each(|id| {
                     // same algo as remove.
                     let bvalue: u64 = id % 64;
                     let range: u64 = id - bvalue;
                     let candidate = IDLRange::new(range, 1 << bvalue);
-                    if let Ok(idx) = list.binary_search(&candidate) {
+                    let (_, partition) = nlist.split_at(idx_min);
+                    if let Ok(idx) = partition.binary_search(&candidate) {
+                        debug_assert!(Ok(idx + idx_min) == nlist.binary_search(&candidate));
+                        let idx = idx + idx_min;
                         let mut existing = nlist.get_mut(idx).unwrap();
                         existing.mask &= !candidate.mask;
                         if existing.mask == 0 {
                             nlist.remove(idx);
                         }
+                        debug_assert!(idx >= idx_min);
+                        idx_min = idx;
                     }
                 });
                 IDLBitRange {
@@ -1124,6 +1196,7 @@ impl<'a> IntoIterator for &'a IDLBitRange {
 #[cfg(test)]
 mod tests {
     use super::IDLBitRange;
+    use super::AVG_RANGE_COMP_REQ;
     use crate::AndNot;
     use std::iter::FromIterator;
 
@@ -1333,6 +1406,14 @@ mod tests {
 
         let idl_result = idl_a & idl_b;
         assert_eq!(idl_result, idl_expect);
+
+        // Exercises the fast path.
+        let idl_a = IDLBitRange::from_iter(vec![64, 66]);
+        let idl_b = IDLBitRange::from_iter(vec![1, 2, 60, 62, 64, 69]);
+        let idl_expect = IDLBitRange::from_iter(vec![64]);
+
+        let idl_result = idl_a & idl_b;
+        assert_eq!(idl_result, idl_expect);
     }
 
     #[test]
@@ -1431,6 +1512,7 @@ mod tests {
         let idl_expect = IDLBitRange::from_iter(vec![1, 2, 3]);
 
         let idl_result = idl_a | idl_b;
+        eprintln!("{:?}, {:?}", idl_result, idl_expect);
         assert_eq!(idl_result, idl_expect);
     }
 
@@ -1490,7 +1572,11 @@ mod tests {
     fn test_range_sparse_not_1() {
         let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
         let idl_b = IDLBitRange::from_iter(vec![3, 4]);
-        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+
+        if AVG_RANGE_COMP_REQ <= 5 {
+            idl_expect.compress();
+        };
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -1586,9 +1672,13 @@ mod tests {
     fn test_range_sparse_comp_not_1() {
         let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 4, 5, 6]);
         let mut idl_b = IDLBitRange::from_iter(vec![3, 4]);
-        let idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
+        let mut idl_expect = IDLBitRange::from_iter(vec![1, 2, 5, 6]);
 
         idl_b.compress();
+
+        if AVG_RANGE_COMP_REQ <= 5 {
+            idl_expect.compress();
+        };
 
         let idl_result = idl_a.andnot(idl_b);
         assert_eq!(idl_result, idl_expect);
@@ -1627,6 +1717,16 @@ mod tests {
         idl_b.compress();
 
         let idl_result = idl_a.andnot(idl_b);
+        assert_eq!(idl_result, idl_expect);
+
+        let idl_a = IDLBitRange::from_iter(vec![1, 2, 3, 64, 65, 66]);
+        let mut idl_b = IDLBitRange::from_iter(vec![65, 80]);
+        idl_b.compress();
+
+        let mut idl_expect = IDLBitRange::from_iter(vec![80]);
+        idl_expect.compress();
+
+        let idl_result = idl_b.andnot(idl_a);
         assert_eq!(idl_result, idl_expect);
     }
 
