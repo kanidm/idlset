@@ -175,7 +175,7 @@ impl fmt::Debug for IDLBitRange {
 /// let idl_expect = IDLBitRange::from_iter(vec![2]);
 /// assert_eq!(idl_result, idl_expect);
 /// ```
-#[derive(Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename = "IDLV2")]
 pub struct IDLBitRange {
     #[serde(rename = "t")]
@@ -199,6 +199,14 @@ impl Default for IDLBitRange {
         IDLBitRange {
             state: IDLState::Sparse(SmallVec::new()),
         }
+    }
+}
+
+impl PartialEq for IDLBitRange {
+    fn eq(&self, other: &Self) -> bool {
+        let x = self & other;
+        debug_assert!(other.len() == self.len() && other.len() == x.len());
+        x.len() == other.len()
     }
 }
 
