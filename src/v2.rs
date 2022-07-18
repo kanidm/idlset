@@ -29,6 +29,10 @@ const AVG_RANGE_COMP_REQ: usize = 12;
 #[cfg(target_arch = "aarch64")]
 const AVG_RANGE_COMP_REQ: usize = 5;
 
+// Untested, but covers other build options.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+const AVG_RANGE_COMP_REQ: usize = 5;
+
 const FAST_PATH_BST_RATIO: usize = 8;
 
 /// The core representation of sets of integers in compressed format.
