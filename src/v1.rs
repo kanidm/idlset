@@ -201,7 +201,7 @@ impl IDLBitRange {
         let r = self.list.binary_search(&candidate);
         match r {
             Ok(idx) => {
-                let mut existing = self.list.get_mut(idx).unwrap();
+                let existing = self.list.get_mut(idx).unwrap();
                 existing.mask |= candidate.mask;
             }
             Err(idx) => {
@@ -227,7 +227,7 @@ impl IDLBitRange {
             //
             // To do this, we not the candidate, so all other bits remain,
             // then we perform and &= so that the existing bits survive.
-            let mut existing = self.list.get_mut(idx).unwrap();
+            let existing = self.list.get_mut(idx).unwrap();
 
             existing.mask &= !candidate.mask;
 
@@ -252,7 +252,7 @@ impl IDLBitRange {
 
         // Get the highest IDLRange out:
         if let Some(last) = self.list.last_mut() {
-            if (*last).range == range {
+            if last.range == range {
                 // Insert the bit.
                 (*last).push_id(bvalue);
                 return;
