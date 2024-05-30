@@ -85,6 +85,13 @@ enum IDLState {
 }
 
 impl IDLState {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            IDLState::Sparse(svec) => svec.shrink_to_fit(),
+            IDLState::Compressed(vec) => vec.shrink_to_fit(),
+        }
+    }
+
     fn sparse_bitand_fast_path(smol: &[u64], lrg: &[u64]) -> Self {
         let mut nlist = SmallVec::with_capacity(smol.len());
         // We cache the idx inbetween to narrow the bst sizes.
@@ -99,6 +106,8 @@ impl IDLState {
                 idx_min = idx;
             }
         });
+
+        nlist.shrink_to_fit();
         IDLState::Sparse(nlist)
     }
 
@@ -120,6 +129,7 @@ impl IDLState {
             }
         });
 
+        nlist.shrink_to_fit();
         IDLState::Sparse(nlist)
     }
 }
@@ -201,7 +211,7 @@ impl Default for IDLBitRange {
     /// Construct a new, empty set.
     fn default() -> Self {
         IDLBitRange {
-            state: IDLState::Sparse(SmallVec::new()),
+            state: IDLState::Sparse(SmallVec::with_capacity(0)),
         }
     }
 }
@@ -334,8 +344,8 @@ impl IDLBitRange {
                 let range: u64 = id - bvalue;
 
                 if let Some(last) = list.last_mut() {
-                    debug_assert!(id >= (*last).range);
-                    if (*last).range == range {
+                    debug_assert!(id >= last.range);
+                    if last.range == range {
                         // Insert the bit.
                         (*last).push_id(bvalue);
                         return;
@@ -366,7 +376,7 @@ impl IDLBitRange {
                 let r = list.binary_search(&candidate);
                 match r {
                     Ok(idx) => {
-                        let mut existing = list.get_mut(idx).unwrap();
+                        let existing = list.get_mut(idx).unwrap();
                         existing.mask |= candidate.mask;
                     }
                     Err(idx) => {
@@ -402,7 +412,7 @@ impl IDLBitRange {
                     //
                     // To do this, we not the candidate, so all other bits remain,
                     // then we perform and &= so that the existing bits survive.
-                    let mut existing = list.get_mut(idx).unwrap();
+                    let existing = list.get_mut(idx).unwrap();
 
                     existing.mask &= !candidate.mask;
 
@@ -422,7 +432,7 @@ impl IDLBitRange {
         if self.is_compressed() {
             return;
         }
-        let mut prev_state = IDLState::Compressed(Vec::new());
+        let mut prev_state = IDLState::Compressed(Vec::with_capacity(0));
         std::mem::swap(&mut prev_state, &mut self.state);
         match prev_state {
             IDLState::Sparse(list) => list.into_iter().for_each(|i| unsafe {
@@ -441,14 +451,15 @@ impl IDLBitRange {
                 None
             } else {
                 let mut maybe = IDLBitRange {
-                    state: IDLState::Compressed(Vec::new()),
+                    state: IDLState::Compressed(Vec::with_capacity(0)),
                 };
                 list.iter().for_each(|id| unsafe { maybe.push_id(*id) });
 
                 if maybe.len_ranges() > 0
                     && (maybe.len() / maybe.len_ranges()) >= AVG_RANGE_COMP_REQ
                 {
-                    let IDLBitRange { state } = maybe;
+                    let IDLBitRange { mut state } = maybe;
+                    state.shrink_to_fit();
                     Some(state)
                 } else {
                     None
@@ -507,6 +518,9 @@ impl IDLBitRange {
                             }
                         }
                     }
+
+                    nlist.shrink_to_fit();
+
                     IDLState::Sparse(nlist)
                 };
 
@@ -540,12 +554,14 @@ impl IDLBitRange {
                     }
                 });
 
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Sparse(nlist),
                 }
             }
             (IDLState::Compressed(list1), IDLState::Compressed(list2)) => {
-                let mut nlist = Vec::new();
+                let mut nlist = Vec::with_capacity(0);
                 let mut liter = list1.iter();
                 let mut riter = list2.iter();
 
@@ -577,6 +593,7 @@ impl IDLBitRange {
                 if nlist.is_empty() {
                     IDLBitRange::new()
                 } else {
+                    nlist.shrink_to_fit();
                     IDLBitRange {
                         state: IDLState::Compressed(nlist),
                     }
@@ -636,6 +653,8 @@ impl IDLBitRange {
                         rnext = riter.next();
                     }
 
+                    nlist.shrink_to_fit();
+
                     IDLState::Sparse(nlist)
                 };
 
@@ -672,7 +691,7 @@ impl IDLBitRange {
                         Ok(idx) => {
                             debug_assert!(Ok(idx + idx_min) == list.binary_search(&candidate));
                             let idx = idx + idx_min;
-                            let mut existing = list.get_mut(idx).unwrap();
+                            let existing = list.get_mut(idx).unwrap();
                             existing.mask |= candidate.mask;
                             debug_assert!(idx >= idx_min);
                             idx_min = idx;
@@ -688,6 +707,8 @@ impl IDLBitRange {
                         }
                     };
                 });
+
+                list.shrink_to_fit();
 
                 IDLBitRange {
                     state: IDLState::Compressed(list),
@@ -743,6 +764,9 @@ impl IDLBitRange {
                     nlist.push(newrange);
                     rnextrange = riter.next();
                 }
+
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Compressed(nlist),
                 }
@@ -788,6 +812,8 @@ impl IDLBitRange {
                     lnext = liter.next();
                 }
 
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Sparse(nlist),
                 }
@@ -832,6 +858,8 @@ impl IDLBitRange {
                     }
                 });
 
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Sparse(nlist),
                 }
@@ -850,7 +878,7 @@ impl IDLBitRange {
                     if let Ok(idx) = partition.binary_search(&candidate) {
                         debug_assert!(Ok(idx + idx_min) == nlist.binary_search(&candidate));
                         let idx = idx + idx_min;
-                        let mut existing = nlist.get_mut(idx).unwrap();
+                        let existing = nlist.get_mut(idx).unwrap();
                         existing.mask &= !candidate.mask;
                         if existing.mask == 0 {
                             nlist.remove(idx);
@@ -859,6 +887,9 @@ impl IDLBitRange {
                         idx_min = idx;
                     }
                 });
+
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Compressed(nlist),
                 }
@@ -908,6 +939,8 @@ impl IDLBitRange {
                     lnextrange = liter.next();
                 }
 
+                nlist.shrink_to_fit();
+
                 IDLBitRange {
                     state: IDLState::Compressed(nlist),
                 }
@@ -943,7 +976,10 @@ impl FromIterator<u64> for IDLBitRange {
             }
         });
 
-        new_sparse.maybe_compress();
+        if !new_sparse.maybe_compress() {
+            // If the compression didn't occur, trim the vec anyway.
+            new_sparse.state.shrink_to_fit();
+        }
         new_sparse
     }
 }
